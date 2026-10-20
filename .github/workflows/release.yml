@@ -1,10 +1,16 @@
 name: Release
 
-# Push a tag like v0.1.1 to build, test and publish the .xpi.
-# Installed copies update themselves via update.json from the latest release.
+# Publish a GitHub release with a tag like v0.1.1 (Releases → Draft a new release).
+# This workflow builds the .xpi with that version, tests it inside Zotero and attaches
+# it together with update.json. Installed copies update themselves from there.
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re)build, e.g. v0.1.0"
+        required: true
 
 permissions:
   contents: write
@@ -12,14 +18,18 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: npm test
       - name: Build
-        run: node scripts/build.mjs --version "${GITHUB_REF_NAME}"
+        run: node scripts/build.mjs --version "$TAG"
       - name: Install Xvfb and Zotero dependencies
         run: |
           sudo apt-get update -q
@@ -27,9 +37,7 @@ jobs:
           sudo apt-get install -y -q xvfb libdbus-glib-1-2 libgtk-3-0 libasound2
       - name: Test the built .xpi inside Zotero
         run: XPI="$(ls build/*.xpi)" bash test/integration/run.sh
-      - name: Publish release
+      - name: Attach .xpi and update.json to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" build/*.xpi build/update.json \
-            --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release upload "$TAG" build/*.xpi build/update.json --clobber

@@ -65,7 +65,7 @@ Tested with Zotero **7.0.24, 9.0.6, 10.0.6 and 11.0 beta 1**.
 
 **CI** runs the unit tests and the Zotero tests (current release, beta, oldest supported 7.0) on every push and **every Monday**. If the weekly run fails, it opens an issue – usually before a new Zotero version reaches the team.
 
-**Release**: bump `version` in `manifest.json`, then push a tag (`git tag v0.1.1 && git push --tags`). The workflow tests the built `.xpi` inside Zotero and publishes it with `update.json`; installed copies update themselves.
+**Release**: on GitHub, *Releases → Draft a new release*, create a tag like `v0.1.1`, publish. The release workflow builds the `.xpi` with that version, tests it inside Zotero and attaches it with `update.json`; installed copies update themselves. (Keep `version` in `manifest.json` in step for local builds.)
 
 **Report a problem**: *Tools → Group Linked Files → Report a Problem…* opens a prefilled GitHub issue (or an e-mail, if `extensions.group-linked-files.reportEmail` is set).
 
