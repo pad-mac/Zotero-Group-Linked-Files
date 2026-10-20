@@ -98,3 +98,7 @@ glf-prefs-naming-separator = Zwischen Autoren
 glf-prefs-naming-etal = Bei mehr Autoren
 glf-prefs-naming-max = Max. Autoren im Namen
 glf-prefs-naming-preview = Beispiele
+glf-prefs-naming-transliterate =
+    .label = Umlaute ersetzen (ü → ue, ß → ss)
+glf-prefs-naming-lowercase =
+    .label = Alles kleinschreiben

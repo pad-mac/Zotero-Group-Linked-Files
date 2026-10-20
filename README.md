@@ -26,13 +26,14 @@ New files get a name from the parent item, independent of Zotero's own naming se
 
 | Item | File |
 |---|---|
-| Müller 1987 | `Müller_1987.pdf` |
-| second Müller 1987 | `Müller_1987a.pdf`, then `…b` |
-| Müller & Schmidt 1990 | `Müller-Schmidt_1990.pdf` |
-| Weber, Braun & Klein 2004 | `Weber-ua_2004.pdf` |
-| no year | `Fischer_oJ.pdf` |
+| Müller 1987 | `mueller_1987.pdf` |
+| second Müller 1987 | `mueller_1987a.pdf`, then `…b` |
+| Müller & Schmidt 1990 | `mueller-schmidt_1990.pdf` |
+| Weber, Braun & Klein 2004 | `weber-ua_2004.pdf` |
+| Groß 2001 | `gross_2001.pdf` |
+| no year | `fischer_oj.pdf` |
 
-Authors are used, otherwise editors. Scheme (`{authors}`, `{year}`, `{title}`), separator, "et al." text and the number of authors before "ua" are set under *Settings → Group Linked Files*, with a live preview. Files already in the shared folder are never renamed.
+Umlauts become ae/oe/ue/ss, other accents are dropped, and everything is lowercase (both can be switched off). Authors are used, otherwise editors. Scheme (`{authors}`, `{year}`, `{title}`), separator, "et al." text and the number of authors before "ua" are set under *Settings → Group Linked Files*, with a live preview. Files already in the shared folder are never renamed.
 
 ## Link matching files
 
@@ -91,7 +92,7 @@ Tested with Zotero **7.0.24, 9.0.6, 10.0.6 and 11.0 beta 1**.
 
 **CI** runs the unit tests and the Zotero tests (current release, beta, oldest supported 7.0) on every push and **every Monday**. If the weekly run fails, it opens an issue – usually before a new Zotero version reaches the team.
 
-**Release**: on GitHub, *Releases → Draft a new release*, create a tag like `v0.1.1`, publish. The release workflow builds the `.xpi` with that version, tests it inside Zotero and attaches it with `update.json`; installed copies update themselves. (Keep `version` in `manifest.json` in step for local builds.)
+**Release**: bump `version` in `manifest.json` and push to `main`. The release workflow builds the `.xpi`, tests it inside Zotero and – only if that passes – publishes release `v<version>` with the `.xpi` and `update.json`. Installed copies update themselves. (Publishing a release by hand on GitHub also works; the files are then attached to it.) Every version bump reaches the whole team, so review before bumping.
 
 **Report a problem**: *Tools → Group Linked Files → Report a Problem…* opens a prefilled GitHub issue (or an e-mail, if `extensions.group-linked-files.reportEmail` is set).
 

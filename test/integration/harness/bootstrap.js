@@ -267,7 +267,7 @@ async function run(dir, results, report) {
 		assert(again === -2, "rename after sharing returned " + again);
 	});
 
-	await check("new files get the naming scheme: Name_Jahr, a/b, A-ua, editors", async () => {
+	await check("new files get the naming scheme: name_jahr, a/b, a-ua, ü→ue, lowercase, editors", async () => {
 		glf.setPref("naming.enabled", true);
 		let m1 = await createItem(["Müller"], "1987");
 		let m2 = await createItem(["Müller"], "1987");
@@ -284,8 +284,8 @@ async function run(dir, results, report) {
 		}
 		await glf.publishPending({ force: true });
 		let names = atts.map(a => a.attachmentFilename);
-		let expected = ["Müller_1987.pdf", "Müller_1987a.pdf", "Weber-ua_2004.pdf",
-			"Müller-Schmidt_1990.pdf", "Herausgeberin_2010.pdf"];
+		let expected = ["mueller_1987.pdf", "mueller_1987a.pdf", "weber-ua_2004.pdf",
+			"mueller-schmidt_1990.pdf", "herausgeberin_2010.pdf"];
 		assert(JSON.stringify(names) == JSON.stringify(expected), "names " + JSON.stringify(names));
 		for (let n of expected) {
 			assert(await IOUtils.exists(PathUtils.join(base, n)), "not in shared folder: " + n);
@@ -413,8 +413,8 @@ async function run(dir, results, report) {
 			await IOUtils.write(shot, Uint8Array.from(atob(data), c => c.charCodeAt(0)));
 		}
 		let preview = doc.getElementById("glf-naming-preview").textContent;
-		for (let n of ["Müller_1987.pdf", "Müller_1987a.pdf", "Müller-Schmidt_1990.pdf",
-			"Weber-ua_2004.pdf"]) {
+		for (let n of ["mueller_1987.pdf", "mueller_1987a.pdf", "mueller-schmidt_1990.pdf",
+			"weber-ua_2004.pdf"]) {
 			assert(preview.includes(n), "preview lacks " + n + ": " + preview);
 		}
 		let text = status.textContent;

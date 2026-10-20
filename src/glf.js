@@ -837,6 +837,8 @@ var GroupLinkedFiles = {
 			maxAuthors: Math.max(1, parseInt(this.getPref("naming.maxAuthors")) || 2),
 			noYear: str("naming.noYear", "oJ"),
 			noAuthor: str("naming.noAuthor", "oA"),
+			transliterate: this.getPref("naming.transliterate") !== false,
+			lowercase: this.getPref("naming.lowercase") !== false,
 		};
 	},
 
@@ -851,7 +853,8 @@ var GroupLinkedFiles = {
 
 	/**
 	 * Build a file name (without extension) from last names, year and title.
-	 * Default "{authors}_{year}": Müller_1987, Müller-Schmidt_1990, Weber-ua_2004.
+	 * Default "{authors}_{year}", umlauts replaced, lowercase:
+	 * mueller_1987, mueller-schmidt_1990, weber-ua_2004.
 	 */
 	formatBaseName({ lastNames = [], year = "", title = "" }, s) {
 		let names = lastNames.map(n => this._cleanPart(n)).filter(Boolean);
@@ -870,8 +873,26 @@ var GroupLinkedFiles = {
 			.replace(/\{authors\}/g, authors)
 			.replace(/\{year\}/g, this._cleanPart(year) || s.noYear)
 			.replace(/\{title\}/g, shortTitle);
-		out = this._cleanPart(out).replace(/^[.\s]+|[.\s]+$/g, "").slice(0, 150);
-		return out || s.noAuthor;
+		out = this._cleanPart(out).replace(/^[.\s]+|[.\s]+$/g, "").slice(0, 150) || s.noAuthor;
+		if (s.transliterate) {
+			out = this.transliterate(out);
+		}
+		if (s.lowercase) {
+			out = out.toLowerCase();
+		}
+		return out;
+	},
+
+	/** ä → ae, ö → oe, ü → ue, ß → ss; other accents dropped (é → e) */
+	transliterate(s) {
+		return String(s)
+			.normalize("NFC")
+			.replace(/Ä/g, "Ae").replace(/Ö/g, "Oe").replace(/Ü/g, "Ue")
+			.replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue")
+			.replace(/ẞ/g, "SS").replace(/ß/g, "ss")
+			.normalize("NFD")
+			.replace(/[\u0300-\u036f]/g, "")
+			.normalize("NFC");
 	},
 
 	/** Last names (authors, else editors, else anyone), year and title of an item */

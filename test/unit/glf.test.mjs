@@ -263,28 +263,38 @@ describe("naming scheme", () => {
 		return env.glf.formatBaseName({ lastNames, year, title: "Ein Titel über Magnetbahnen" }, s);
 	};
 
-	test("default: Name_Jahr, A-B_Jahr, A-ua_Jahr", () => {
+	test("default: name_jahr, a-b_jahr, a-ua_jahr; umlauts replaced, lowercase", () => {
 		env = makeEnv();
-		assert.equal(fmt(["Müller"], "1987"), "Müller_1987");
-		assert.equal(fmt(["Müller", "Schmidt"], "1990"), "Müller-Schmidt_1990");
-		assert.equal(fmt(["Weber", "Braun", "Klein"], "2004"), "Weber-ua_2004");
+		assert.equal(fmt(["Müller"], "1987"), "mueller_1987");
+		assert.equal(fmt(["Müller", "Schmidt"], "1990"), "mueller-schmidt_1990");
+		assert.equal(fmt(["Weber", "Braun", "Klein"], "2004"), "weber-ua_2004");
+		assert.equal(fmt(["Groß", "Öztürk"], "2001"), "gross-oeztuerk_2001");
+		assert.equal(fmt(["Élise"], "1999"), "elise_1999");
+		assert.equal(fmt(["Müller".normalize("NFD")], "1987"), "mueller_1987");
+	});
+
+	test("umlaut replacement and lowercase can be switched off", () => {
+		env = makeEnv();
+		assert.equal(fmt(["Müller"], "1987", { transliterate: false, lowercase: false }), "Müller_1987");
+		assert.equal(fmt(["Müller"], "1987", { transliterate: false }), "müller_1987");
+		assert.equal(fmt(["Müller"], "1987", { lowercase: false }), "Mueller_1987");
 	});
 
 	test("missing year or author, unsafe characters", () => {
 		env = makeEnv();
-		assert.equal(fmt(["Fischer"], ""), "Fischer_oJ");
-		assert.equal(fmt([], "2001"), "oA_2001");
-		assert.equal(fmt(["Mül/ler:"], "1987"), "Müller_1987");
-		assert.equal(fmt(["von der Heide"], "1990"), "von der Heide_1990");
+		assert.equal(fmt(["Fischer"], ""), "fischer_oj");
+		assert.equal(fmt([], "2001"), "oa_2001");
+		assert.equal(fmt(["Mül/ler:"], "1987"), "mueller_1987");
+		assert.equal(fmt(["von der Heide"], "1990"), "von der heide_1990");
 	});
 
 	test("is configurable", () => {
 		env = makeEnv();
-		assert.equal(fmt(["A", "B", "C"], "2000", { maxAuthors: 3, authorSeparator: "_" }), "A_B_C_2000");
+		assert.equal(fmt(["A", "B", "C"], "2000", { maxAuthors: 3, authorSeparator: "_" }), "a_b_c_2000");
 		assert.equal(fmt(["A", "B", "C"], "2000", { etAl: "et al", template: "{year} {authors}" }),
-			"2000 A-et al");
+			"2000 a-et al");
 		assert.equal(fmt(["A"], "2000", { template: "{authors} {year} - {title}" }),
-			"A 2000 - Ein Titel über Magnetbahnen");
+			"a 2000 - ein titel ueber magnetbahnen");
 	});
 
 	test("matchKey ignores case, umlaut spelling and Unicode form", () => {
@@ -309,13 +319,13 @@ describe("new files get the scheme name", () => {
 		const a3 = env.addAttachment("scan3.pdf", { local: "3", parent: p3 });
 		const a4 = env.addAttachment("x.pdf", { local: "4", parent: p4 });
 		await env.glf.publishPending();
-		assert.equal(a1.attachmentFilename, "Müller_1987.pdf");
-		assert.equal(a2.attachmentFilename, "Müller_1987a.pdf");
-		assert.equal(a3.attachmentFilename, "Müller_1987b.pdf");
-		assert.equal(a4.attachmentFilename, "Weber-ua_2004.pdf");
+		assert.equal(a1.attachmentFilename, "mueller_1987.pdf");
+		assert.equal(a2.attachmentFilename, "mueller_1987a.pdf");
+		assert.equal(a3.attachmentFilename, "mueller_1987b.pdf");
+		assert.equal(a4.attachmentFilename, "weber-ua_2004.pdf");
 		assert.deepEqual(env.listBase(),
-			["Müller_1987.pdf", "Müller_1987a.pdf", "Müller_1987b.pdf", "Weber-ua_2004.pdf"]);
-		assert.equal(env.readBase("Müller_1987a.pdf"), "2");
+			["mueller_1987.pdf", "mueller_1987a.pdf", "mueller_1987b.pdf", "weber-ua_2004.pdf"]);
+		assert.equal(env.readBase("mueller_1987a.pdf"), "2");
 	});
 
 	test("an existing shared file with that name (any spelling) means the next letter", async () => {
@@ -324,7 +334,7 @@ describe("new files get the scheme name", () => {
 		const p = env.addParent({ authors: ["Müller"], year: "1987" });
 		const a = env.addAttachment("new.pdf", { local: "NEW", parent: p });
 		await env.glf.publishPending();
-		assert.equal(a.attachmentFilename, "Müller_1987a.pdf");
+		assert.equal(a.attachmentFilename, "mueller_1987a.pdf");
 		assert.equal(env.readBase("Mueller_1987.pdf"), "OLD");
 	});
 
@@ -342,7 +352,7 @@ describe("new files get the scheme name", () => {
 		const p = env.addParent({ editors: ["Hrsg"], year: "2010" });
 		const a = env.addAttachment("x.pdf", { local: "X", parent: p });
 		await env.glf.publishPending();
-		assert.equal(a.attachmentFilename, "Hrsg_2010.pdf");
+		assert.equal(a.attachmentFilename, "hrsg_2010.pdf");
 	});
 
 	test("can be switched off", async () => {

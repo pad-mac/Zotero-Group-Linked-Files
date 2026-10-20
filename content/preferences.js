@@ -69,6 +69,16 @@ var GroupLinkedFilesPrefs = {
 			this.updateNaming();
 		});
 
+		for (let [id, pref] of [["glf-naming-transliterate", "naming.transliterate"],
+			["glf-naming-lowercase", "naming.lowercase"]]) {
+			let box = document.getElementById(id);
+			box.checked = this.glf.getPref(pref) !== false;
+			box.addEventListener("command", () => {
+				this.glf.setPref(pref, box.checked);
+				this.updateNaming();
+			});
+		}
+
 		let fields = {
 			"glf-naming-template": "naming.template",
 			"glf-naming-separator": "naming.authorSeparator",
@@ -98,7 +108,7 @@ var GroupLinkedFilesPrefs = {
 		let s = this.glf.getNamingSettings();
 		let enabled = s.enabled;
 		for (let id of ["glf-naming-template", "glf-naming-separator", "glf-naming-etal",
-			"glf-naming-max"]) {
+			"glf-naming-max", "glf-naming-transliterate", "glf-naming-lowercase"]) {
 			document.getElementById(id).disabled = !enabled;
 		}
 		let samples = [
