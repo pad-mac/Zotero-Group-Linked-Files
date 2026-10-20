@@ -1,0 +1,35 @@
+name: Release
+
+# Push a tag like v0.1.1 to build, test and publish the .xpi.
+# Installed copies update themselves via update.json from the latest release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - name: Build
+        run: node scripts/build.mjs --version "${GITHUB_REF_NAME}"
+      - name: Install Xvfb and Zotero dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb libdbus-glib-1-2 libgtk-3-0 libasound2t64 || \
+          sudo apt-get install -y -q xvfb libdbus-glib-1-2 libgtk-3-0 libasound2
+      - name: Test the built .xpi inside Zotero
+        run: XPI="$(ls build/*.xpi)" bash test/integration/run.sh
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" build/*.xpi build/update.json \
+            --title "$GITHUB_REF_NAME" --generate-notes

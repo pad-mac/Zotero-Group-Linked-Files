@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Weekly check against the newest Zotero release and beta, so a breaking Zotero
+  # update shows up here before it reaches the team.
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+
+  zotero:
+    needs: unit
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: release
+            channel: release
+          - name: beta
+            channel: beta
+          - name: oldest supported (7.0)
+            channel: release
+            version: "7.0.24"
+    name: Zotero ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Xvfb and Zotero dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb libdbus-glib-1-2 libgtk-3-0 libasound2t64 || \
+          sudo apt-get install -y -q xvfb libdbus-glib-1-2 libgtk-3-0 libasound2
+      - name: Run plugin inside Zotero
+        env:
+          ZOTERO_CHANNEL: ${{ matrix.channel }}
+          ZOTERO_VERSION: ${{ matrix.version }}
+        run: bash test/integration/run.sh
+
+  report-scheduled-failure:
+    needs: [unit, zotero]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue (once)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Weekly Zotero check failed"
+          if gh issue list -R "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json number -q '.[].number' | grep -q .; then
+            echo "Issue already open"; exit 0
+          fi
+          gh issue create -R "$GITHUB_REPOSITORY" --title "$title" \
+            --body "The scheduled test run against the current Zotero release/beta failed: $RUN_URL"

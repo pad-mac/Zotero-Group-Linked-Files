@@ -1,0 +1,14 @@
+{
+  "manifest_version": 2,
+  "name": "GLF integration harness",
+  "version": "1.0.0",
+  "description": "Runs Group Linked Files checks inside a real Zotero, writes results, quits.",
+  "applications": {
+    "zotero": {
+      "id": "glf-harness@pad-mac.github.io",
+      "strict_min_version": "6.999",
+      "strict_max_version": "99.*",
+      "update_url": "https://example.invalid/update.json"
+    }
+  }
+}

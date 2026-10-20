@@ -1,0 +1,27 @@
+<linkset>
+	<html:link rel="localization" href="group-linked-files.ftl"/>
+</linkset>
+<vbox id="glf-prefs">
+	<groupbox>
+		<html:p class="glf-intro" data-l10n-id="glf-prefs-intro"/>
+
+		<label class="glf-label" data-l10n-id="glf-prefs-group" control="glf-group"/>
+		<menulist id="glf-group" native="true">
+			<menupopup id="glf-group-popup"/>
+		</menulist>
+
+		<label class="glf-label" data-l10n-id="glf-prefs-folder"/>
+		<hbox align="center" class="glf-folder-row">
+			<html:input type="text" id="glf-base" readonly="true"/>
+			<button id="glf-choose" data-l10n-id="glf-prefs-choose"/>
+		</hbox>
+	</groupbox>
+
+	<groupbox>
+		<label><html:h2 data-l10n-id="glf-prefs-status-title"/></label>
+		<html:pre id="glf-status" class="glf-status"></html:pre>
+		<hbox>
+			<button id="glf-check" data-l10n-id="glf-prefs-check"/>
+		</hbox>
+	</groupbox>
+</vbox>
