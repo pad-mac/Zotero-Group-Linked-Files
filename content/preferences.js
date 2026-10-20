@@ -33,7 +33,88 @@ var GroupLinkedFilesPrefs = {
 
 		this.populateGroups();
 		input.value = this.glf.getPref("basePath") || "";
+		this.initNaming();
 		this.refresh(false);
+	},
+
+	initNaming() {
+		let grid = document.querySelector(".glf-naming-grid");
+		Object.assign(grid.style, {
+			display: "grid",
+			gridTemplateColumns: "max-content 1fr",
+			alignItems: "center",
+			columnGap: "12px",
+			rowGap: "6px",
+			margin: "6px 0 4px",
+		});
+		for (let el of document.querySelectorAll(".glf-naming-grid .glf-short")) {
+			el.style.width = "8em";
+		}
+		let help = document.getElementById("glf-naming-help");
+		help.style.margin = "4px 0 6px";
+		document.l10n.setAttributes(help, "glf-prefs-naming-help",
+			{ tokens: "{authors}, {year}, {title}" });
+		let preview = document.getElementById("glf-naming-preview");
+		Object.assign(preview.style, {
+			whiteSpace: "pre-wrap",
+			fontFamily: "inherit",
+			margin: "2px 0 0",
+			opacity: "0.85",
+		});
+
+		let enabled = document.getElementById("glf-naming-enabled");
+		enabled.checked = this.glf.getPref("naming.enabled") !== false;
+		enabled.addEventListener("command", () => {
+			this.glf.setPref("naming.enabled", enabled.checked);
+			this.updateNaming();
+		});
+
+		let fields = {
+			"glf-naming-template": "naming.template",
+			"glf-naming-separator": "naming.authorSeparator",
+			"glf-naming-etal": "naming.etAl",
+		};
+		for (let [id, pref] of Object.entries(fields)) {
+			let el = document.getElementById(id);
+			el.value = this.glf.getPref(pref) ?? "";
+			el.addEventListener("input", () => {
+				this.glf.setPref(pref, el.value);
+				this.updateNaming();
+			});
+		}
+		let max = document.getElementById("glf-naming-max");
+		max.value = String(this.glf.getNamingSettings().maxAuthors);
+		max.addEventListener("input", () => {
+			let n = parseInt(max.value);
+			if (n >= 1) {
+				this.glf.setPref("naming.maxAuthors", n);
+				this.updateNaming();
+			}
+		});
+		this.updateNaming();
+	},
+
+	updateNaming() {
+		let s = this.glf.getNamingSettings();
+		let enabled = s.enabled;
+		for (let id of ["glf-naming-template", "glf-naming-separator", "glf-naming-etal",
+			"glf-naming-max"]) {
+			document.getElementById(id).disabled = !enabled;
+		}
+		let samples = [
+			{ lastNames: ["Müller"], year: "1987", title: "Die Magnetschwebebahn" },
+			{ lastNames: ["Müller", "Schmidt"], year: "1990", title: "Transrapid" },
+			{ lastNames: ["Weber", "Braun", "Klein"], year: "2004", title: "Emsland" },
+			{ lastNames: ["Fischer"], year: "", title: "Ohne Datum" },
+		];
+		let fmt = p => this.glf.formatBaseName(p, s);
+		let label = p => `${p.lastNames.join(", ")} ${p.year ? "(" + p.year + ")" : ""}`.trim();
+		let lines = samples.map(p => `${label(p)}  →  ${fmt(p)}.pdf`);
+		let first = fmt(samples[0]);
+		lines.splice(1, 0, `${label(samples[0])}, 2.  →  ${first}a.pdf`);
+		let preview = document.getElementById("glf-naming-preview");
+		preview.textContent = lines.join("\n");
+		preview.style.opacity = enabled ? "0.85" : "0.4";
 	},
 
 	populateGroups() {

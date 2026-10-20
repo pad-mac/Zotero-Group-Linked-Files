@@ -144,10 +144,47 @@ var GroupLinkedFiles = {
 		);
 	},
 
+	/**
+	 * The same filename can be stored in two Unicode forms (e.g. "ü" as one character
+	 * on Windows, or "u" + combining mark as macOS often writes it). Windows doesn't
+	 * treat them as the same name, so try both.
+	 */
+	_nameVariants(name) {
+		return [...new Set([name, name.normalize("NFC"), name.normalize("NFD")])];
+	},
+
+	/** Candidate paths in the shared folder for this attachment, most likely first */
+	getSharedCandidates(item) {
+		let path = this.getSharedPath(item);
+		if (!path) {
+			return [];
+		}
+		let base = this.getBasePath();
+		return this._nameVariants(PathUtils.filename(path)).map(n => PathUtils.join(base, n));
+	},
+
+	/** Existing path of this attachment's file in the shared folder, or null */
+	async findSharedFile(item) {
+		for (let path of this.getSharedCandidates(item)) {
+			if (await IOUtils.exists(path)) {
+				return path;
+			}
+		}
+		return null;
+	},
+
+	findSharedFileSync(item) {
+		for (let path of this.getSharedCandidates(item)) {
+			if (this._existsSync(path)) {
+				return path;
+			}
+		}
+		return null;
+	},
+
 	/** True if a file with this attachment's name exists in the shared folder */
 	async isPublished(item) {
-		let path = this.getSharedPath(item);
-		return !!path && await IOUtils.exists(path);
+		return !!(await this.findSharedFile(item));
 	},
 
 	_comparablePath(path) {
@@ -283,8 +320,8 @@ var GroupLinkedFiles = {
 				if (!self.isManagedItem(this) || self._existsSync(path)) {
 					return path;
 				}
-				let shared = self.getSharedPath(this);
-				if (shared && self._existsSync(shared)) {
+				let shared = self.findSharedFileSync(this);
+				if (shared) {
 					return shared;
 				}
 			}
@@ -304,8 +341,8 @@ var GroupLinkedFiles = {
 				if (!self.isManagedItem(this)) {
 					return path;
 				}
-				let shared = self.getSharedPath(this);
-				if (shared && await IOUtils.exists(shared)) {
+				let shared = await self.findSharedFile(this);
+				if (shared) {
 					if (typeof this._updateAttachmentStates == "function") {
 						this._updateAttachmentStates(true);
 					}
@@ -587,6 +624,14 @@ var GroupLinkedFiles = {
 		return this._publishing;
 	},
 
+	async _getLibraryItems(libraryID) {
+		let lib = Zotero.Libraries.get(libraryID);
+		if (lib && lib.waitForDataLoad) {
+			await lib.waitForDataLoad("item");
+		}
+		return Zotero.Items.getAll(libraryID, false, false);
+	},
+
 	async _publish(force) {
 		let result = {
 			published: [], renamed: [], waiting: 0, errors: [], baseMissing: false
@@ -604,15 +649,14 @@ var GroupLinkedFiles = {
 		let delayMs = force
 			? 0
 			: Math.max(0, (parseInt(this.getPref("publishDelaySeconds")) || 0) * 1000);
-		let lib = Zotero.Libraries.get(libraryID);
-		if (lib && lib.waitForDataLoad) {
-			await lib.waitForDataLoad("item");
-		}
-		let items = await Zotero.Items.getAll(libraryID, false, false);
-		for (let item of items) {
-			if (!this.isManagedItem(item)) {
-				continue;
-			}
+		let naming = this.getNamingSettings();
+		let attachments = (await this._getLibraryItems(libraryID))
+			.filter(item => this.isManagedItem(item))
+			// Oldest first, so the earlier item gets "Name_1987" and later ones "…a", "…b"
+			.sort((a, b) => this._olderFirst(a, b));
+		let names = await this._buildNameIndex(base, attachments);
+
+		for (let item of attachments) {
 			let name = item.attachmentFilename;
 			if (!this.isValidSharedFilename(name)) {
 				continue;
@@ -623,36 +667,40 @@ var GroupLinkedFiles = {
 				continue;
 			}
 			try {
+				let shared = await this.findSharedFile(item);
+				if (shared && await this._sameFile(local, shared)) {
+					continue; // already in the shared folder
+				}
 				if (delayMs) {
 					let modified = Zotero.Date.sqlToDate(item.dateModified, true);
 					let stat = await IOUtils.stat(local);
 					let last = Math.max(modified ? modified.getTime() : 0, stat.lastModified || 0);
-					if (Date.now() - last < delayMs) {
+					// Standalone files wait longer: "Retrieve Metadata" may still add a parent
+					let wait = item.parentItemID ? delayMs : delayMs * 10;
+					if (Date.now() - last < wait) {
 						result.waiting++;
 						continue;
 					}
 				}
-				let target = PathUtils.join(base, name);
-				if (await IOUtils.exists(target)) {
-					if (await this._sameFile(local, target)) {
-						continue;
-					}
-					// Name taken by a different file: rename our local copy first
-					let unique = await this._uniqueName(base, name);
+				let desired = this._desiredFilename(item, name, naming, names);
+				if (desired != name) {
 					let renamed = await this._originals.renameAttachmentFile.call(
-						item, unique, { overwrite: false, unique: false }
+						item, desired, { overwrite: false, unique: false }
 					);
 					if (renamed !== true) {
 						result.errors.push({ name, error: "rename failed: " + renamed });
 						continue;
 					}
-					result.renamed.push({ from: name, to: unique });
-					local = PathUtils.join(dir, unique);
-					target = PathUtils.join(base, unique);
+					let newName = item.attachmentFilename;
+					result.renamed.push({ from: name, to: newName });
+					names.moveAttachment(item.id, name, newName);
+					name = newName;
+					local = PathUtils.join(dir, name);
 				}
-				await IOUtils.copy(local, target, { noOverwrite: true });
-				result.published.push(PathUtils.filename(target));
-				this.log(`copied ${PathUtils.filename(target)} to shared folder`);
+				await IOUtils.copy(local, PathUtils.join(base, name), { noOverwrite: true });
+				names.addFile(name);
+				result.published.push(name);
+				this.log(`copied ${name} to shared folder`);
 			}
 			catch (e) {
 				Zotero.logError(e);
@@ -660,6 +708,91 @@ var GroupLinkedFiles = {
 			}
 		}
 		return result;
+	},
+
+	/**
+	 * Which names are taken: files in the shared folder, and filenames of the group's
+	 * attachments (also ones whose file isn't on this computer). Compared with
+	 * matchKey(), so "Müller_1987.pdf" and "mueller_1987.pdf" count as the same name.
+	 */
+	async _buildNameIndex(base, attachments) {
+		let files = new Set();
+		for (let path of await IOUtils.getChildren(base)) {
+			files.add(this.matchKey(PathUtils.filename(path)));
+		}
+		let byName = new Map();
+		let add = (key, id) => {
+			if (!byName.has(key)) {
+				byName.set(key, new Set());
+			}
+			byName.get(key).add(id);
+		};
+		for (let item of attachments) {
+			add(this.matchKey(item.attachmentFilename || ""), item.id);
+		}
+		return {
+			isTaken: (key, itemID) => files.has(key)
+				|| [...(byName.get(key) || [])].some(id => id != itemID),
+			addFile: name => files.add(this.matchKey(name)),
+			moveAttachment: (itemID, from, to) => {
+				let set = byName.get(this.matchKey(from));
+				if (set) {
+					set.delete(itemID);
+				}
+				add(this.matchKey(to), itemID);
+			},
+		};
+	},
+
+	/** Name a new file should get before it's copied into the shared folder */
+	_desiredFilename(item, currentName, naming, names) {
+		let isTaken = key => names.isTaken(key, item.id);
+		let ext = this._extension(currentName);
+		let base = null;
+		if (naming.enabled && item.parentItemID) {
+			let parent = Zotero.Items.get(item.parentItemID);
+			if (parent && parent.isRegularItem()) {
+				base = this.getBaseNameForItem(parent, naming);
+			}
+		}
+		if (!base) {
+			if (!isTaken(this.matchKey(currentName))) {
+				return currentName;
+			}
+			return this._nextFreeName(this._stem(currentName), ext, isTaken, null, false);
+		}
+		return this._nextFreeName(base, ext, isTaken, currentName, true);
+	},
+
+	/**
+	 * First free name: "Base.ext", then "Basea.ext", "Baseb.ext", … (letters) or
+	 * "Base (2).ext", … If the current name already fits the scheme and is free, keep it.
+	 */
+	_nextFreeName(base, ext, isTaken, currentName, letters) {
+		if (currentName && this._extension(currentName).toLowerCase() == ext.toLowerCase()) {
+			let baseKey = this.matchKey(base);
+			let curKey = this.matchKey(this._stem(currentName));
+			if (curKey.startsWith(baseKey) && /^[a-z]?$/.test(curKey.slice(baseKey.length))
+					&& !isTaken(this.matchKey(currentName))) {
+				return currentName;
+			}
+		}
+		let stems = [base];
+		if (letters) {
+			for (let c of "abcdefghijklmnopqrstuvwxyz") {
+				stems.push(base + c);
+			}
+		}
+		for (let n = 2; n < 1000; n++) {
+			stems.push(`${base} (${n})`);
+		}
+		for (let stem of stems) {
+			let name = stem + ext;
+			if (!isTaken(this.matchKey(name))) {
+				return name;
+			}
+		}
+		throw new Error("No free filename for " + base + ext);
 	},
 
 	async _sameFile(a, b) {
@@ -674,20 +807,246 @@ var GroupLinkedFiles = {
 		return ha == hb;
 	},
 
-	async _uniqueName(dir, name) {
-		let m = name.match(/^(.*?)(\.[^.]*)?$/);
-		let stem = m[1];
-		let ext = m[2] || "";
-		for (let n = 2; n < 1000; n++) {
-			let candidate = `${stem} (${n})${ext}`;
-			if (!(await IOUtils.exists(PathUtils.join(dir, candidate)))) {
-				return candidate;
+	/** Sort by date added, then by ID (several items can be added in the same second) */
+	_olderFirst(a, b) {
+		return String(a.dateAdded || "").localeCompare(String(b.dateAdded || "")) || a.id - b.id;
+	},
+
+	_extension(name) {
+		let m = String(name).match(/(\.[A-Za-z0-9]{1,6})$/);
+		return m && m.index > 0 ? m[1] : "";
+	},
+
+	_stem(name) {
+		let ext = this._extension(name);
+		return ext ? name.slice(0, -ext.length) : name;
+	},
+
+	// ------------------------------------------------------------------ naming
+
+	getNamingSettings() {
+		let str = (name, fallback) => {
+			let v = this.getPref(name);
+			return typeof v == "string" ? v : fallback;
+		};
+		return {
+			enabled: this.getPref("naming.enabled") !== false,
+			template: str("naming.template", "").trim() || "{authors}_{year}",
+			authorSeparator: str("naming.authorSeparator", "-"),
+			etAl: str("naming.etAl", "ua"),
+			maxAuthors: Math.max(1, parseInt(this.getPref("naming.maxAuthors")) || 2),
+			noYear: str("naming.noYear", "oJ"),
+			noAuthor: str("naming.noAuthor", "oA"),
+		};
+	},
+
+	_cleanPart(s) {
+		return String(s || "")
+			.normalize("NFC")
+			// eslint-disable-next-line no-control-regex
+			.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "")
+			.replace(/\s+/g, " ")
+			.trim();
+	},
+
+	/**
+	 * Build a file name (without extension) from last names, year and title.
+	 * Default "{authors}_{year}": Müller_1987, Müller-Schmidt_1990, Weber-ua_2004.
+	 */
+	formatBaseName({ lastNames = [], year = "", title = "" }, s) {
+		let names = lastNames.map(n => this._cleanPart(n)).filter(Boolean);
+		let authors;
+		if (!names.length) {
+			authors = s.noAuthor;
+		}
+		else if (names.length <= s.maxAuthors) {
+			authors = names.join(s.authorSeparator);
+		}
+		else {
+			authors = s.etAl ? names[0] + s.authorSeparator + s.etAl : names[0];
+		}
+		let shortTitle = this._cleanPart(title).split(" ").slice(0, 6).join(" ").slice(0, 60);
+		let out = s.template
+			.replace(/\{authors\}/g, authors)
+			.replace(/\{year\}/g, this._cleanPart(year) || s.noYear)
+			.replace(/\{title\}/g, shortTitle);
+		out = this._cleanPart(out).replace(/^[.\s]+|[.\s]+$/g, "").slice(0, 150);
+		return out || s.noAuthor;
+	},
+
+	/** Last names (authors, else editors, else anyone), year and title of an item */
+	getNameParts(item) {
+		let creators = item.getCreators();
+		let primary = Zotero.CreatorTypes.getPrimaryIDForType(item.itemTypeID);
+		let editor = Zotero.CreatorTypes.getID("editor");
+		let pick = creators.filter(c => c.creatorTypeID == primary);
+		if (!pick.length) {
+			pick = creators.filter(c => c.creatorTypeID == editor);
+		}
+		if (!pick.length) {
+			pick = creators;
+		}
+		let year = "";
+		try {
+			let sql = Zotero.Date.multipartToSQL(item.getField("date", true, true) || "");
+			if (/^\d{4}/.test(sql) && !sql.startsWith("0000")) {
+				year = sql.substr(0, 4);
 			}
 		}
-		throw new Error("No unique filename available for " + name);
+		catch (e) {}
+		return {
+			lastNames: pick.map(c => c.lastName || c.name || ""),
+			year,
+			title: item.getField("title") || "",
+		};
+	},
+
+	getBaseNameForItem(item, settings = this.getNamingSettings()) {
+		return this.formatBaseName(this.getNameParts(item), settings);
+	},
+
+	/** Comparison key: case-, Unicode-form- and umlaut-insensitive (ü = ue), no spaces */
+	matchKey(s) {
+		return String(s)
+			.normalize("NFC")
+			.toLowerCase()
+			.replace(/ä/g, "ae")
+			.replace(/ö/g, "oe")
+			.replace(/ü/g, "ue")
+			.replace(/ß/g, "ss")
+			.normalize("NFD")
+			.replace(/[̀-ͯ]/g, "")
+			.replace(/\s+/g, "");
+	},
+
+	// ------------------------------------------------------------------ link matching
+
+	_collectionItems(collection) {
+		let out = new Map();
+		let walk = (c) => {
+			for (let item of c.getChildItems(false)) {
+				out.set(item.id, item);
+			}
+			for (let sub of c.getChildCollections(false)) {
+				walk(sub);
+			}
+		};
+		walk(collection);
+		return [...out.values()];
+	},
+
+	/**
+	 * Find files in the shared folder whose name (without extension) matches an item's
+	 * scheme name, for items that have no file yet. One file per name: if several items
+	 * share author and year, only the oldest one gets the file; the others are skipped.
+	 */
+	async findMatches({ collectionID = null } = {}) {
+		let libraryID = this.getLibraryID();
+		let base = this.getBasePath();
+		if (!libraryID) {
+			throw this._error("glf-not-configured");
+		}
+		if (!base || !(await IOUtils.exists(base))) {
+			throw this._error("glf-error-no-folder");
+		}
+		let settings = this.getNamingSettings();
+		let all = await this._getLibraryItems(libraryID);
+		let linked = new Set(all
+			.filter(i => i.isAttachment() && i.isFileAttachment())
+			.map(i => this.matchKey(i.attachmentFilename || "")));
+
+		let index = new Map();
+		for (let path of await IOUtils.getChildren(base)) {
+			let name = PathUtils.filename(path);
+			if (name.startsWith(".") || linked.has(this.matchKey(name))) {
+				continue;
+			}
+			let info;
+			try {
+				info = await IOUtils.stat(path);
+			}
+			catch (e) {
+				continue;
+			}
+			if (info.type && info.type != "regular") {
+				continue;
+			}
+			let key = this.matchKey(this._stem(name));
+			let prev = index.get(key);
+			if (!prev || (!/\.pdf$/i.test(prev) && /\.pdf$/i.test(name))) {
+				index.set(key, name);
+			}
+		}
+
+		let scope = all;
+		if (collectionID) {
+			let collection = Zotero.Collections.get(collectionID);
+			if (!collection || collection.libraryID != libraryID) {
+				throw this._error("glf-error-not-group");
+			}
+			scope = this._collectionItems(collection);
+		}
+		let candidates = scope
+			.filter(item => item.isRegularItem() && !item.deleted)
+			.filter(item => !Zotero.Items.get(item.getAttachments())
+				.some(a => a && a.isFileAttachment()))
+			.sort((a, b) => this._olderFirst(a, b));
+
+		let used = new Set();
+		let matches = [];
+		let skipped = [];
+		let unmatched = [];
+		for (let item of candidates) {
+			let key = this.matchKey(this.getBaseNameForItem(item, settings));
+			if (used.has(key)) {
+				skipped.push(item);
+				continue;
+			}
+			let file = index.get(key);
+			if (!file) {
+				unmatched.push(item);
+				continue;
+			}
+			used.add(key);
+			index.delete(key);
+			matches.push({ item, file });
+		}
+		return { matches, skipped, unmatched, checked: candidates.length };
+	},
+
+	async linkMatches(matches) {
+		let base = this.getBasePath();
+		let linked = 0;
+		let errors = [];
+		for (let { item, file } of matches) {
+			try {
+				await this.attachSharedFile(item, PathUtils.join(base, file));
+				linked++;
+			}
+			catch (e) {
+				Zotero.logError(e);
+				errors.push(file);
+			}
+		}
+		return { linked, errors };
 	},
 
 	// ------------------------------------------------------------------ status
+
+	/** Does Zotero's server have a file for this attachment (uploaded without the plugin)? */
+	async _hasFileOnZoteroServer(item) {
+		try {
+			let Local = Zotero.Sync && Zotero.Sync.Data && Zotero.Sync.Data.Local;
+			if (!Local || !Local.getCacheObject || !item.version) {
+				return false;
+			}
+			let json = await Local.getCacheObject("item", item.libraryID, item.key, item.version);
+			return !!(json && (json.md5 || (json.data && json.data.md5)));
+		}
+		catch (e) {
+			return false;
+		}
+	},
 
 	async getStatus() {
 		let status = {
@@ -700,6 +1059,7 @@ var GroupLinkedFiles = {
 			total: 0,
 			found: 0,
 			missing: [],
+			stranded: [],
 		};
 		if (status.libraryID) {
 			let group = Zotero.Groups.get(this.getGroupID());
@@ -712,21 +1072,18 @@ var GroupLinkedFiles = {
 		if (!status.configured) {
 			return status;
 		}
-		let lib = Zotero.Libraries.get(status.libraryID);
-		if (lib && lib.waitForDataLoad) {
-			await lib.waitForDataLoad("item");
-		}
-		let items = await Zotero.Items.getAll(status.libraryID, false, false);
-		for (let item of items) {
+		for (let item of await this._getLibraryItems(status.libraryID)) {
 			if (!this.isManagedItem(item)) {
 				continue;
 			}
 			status.total++;
 			if (await item.getFilePathAsync()) {
 				status.found++;
+				continue;
 			}
-			else {
-				status.missing.push(item.attachmentFilename);
+			status.missing.push(item.attachmentFilename);
+			if (await this._hasFileOnZoteroServer(item)) {
+				status.stranded.push(item.attachmentFilename);
 			}
 		}
 		return status;
@@ -804,10 +1161,37 @@ var GroupLinkedFiles = {
 			let popup = doc.createXULElement("menupopup");
 			menu.append(popup);
 			popup.append(
+				menuitem("glf-tools-link", "glf-menu-link", () => this.cmdLink(win, null)),
 				menuitem("glf-tools-check", "glf-menu-check", () => this.cmdCheck(win)),
+				doc.createXULElement("menuseparator"),
 				menuitem("glf-tools-settings", "glf-menu-settings", () => this.openPreferences()),
 				menuitem("glf-tools-report", "glf-menu-report", () => this.cmdReport())
 			);
+		}
+
+		// Collection/library context menu: link matching files for that collection
+		let collectionMenu = doc.getElementById("zotero-collectionmenu");
+		if (collectionMenu) {
+			let sep = add(collectionMenu, doc.createXULElement("menuseparator"));
+			sep.id = "glf-collectionmenu-separator";
+			let link = add(collectionMenu, menuitem(
+				"glf-collectionmenu-link", "glf-menu-link-collection",
+				() => this.cmdLink(win, this._selectedCollectionID(win))
+			));
+			let onShowing = (event) => {
+				if (event.target !== collectionMenu) {
+					return;
+				}
+				let show = false;
+				try {
+					show = this.isManagedLibrary(win.ZoteroPane.getSelectedLibraryID());
+				}
+				catch (e) {}
+				sep.hidden = !show;
+				link.hidden = !show;
+			};
+			collectionMenu.addEventListener("popupshowing", onShowing);
+			cleanups.push(() => collectionMenu.removeEventListener("popupshowing", onShowing));
 		}
 
 		this._windows.set(win, () => {
@@ -939,15 +1323,87 @@ var GroupLinkedFiles = {
 				}));
 			}
 		}
-		if (s.missing.length) {
-			let shown = s.missing.slice(0, 15);
+		if (s.stranded.length) {
+			lines.push("", this.l10n("glf-check-stranded", { count: s.stranded.length }));
+			lines.push(...s.stranded.slice(0, 15).map(n => "  • " + n));
+			if (s.stranded.length > 15) {
+				lines.push(this.l10n("glf-check-more", { count: s.stranded.length - 15 }));
+			}
+		}
+		let missing = s.missing.filter(n => !s.stranded.includes(n));
+		if (missing.length) {
+			let shown = missing.slice(0, 15);
 			lines.push("", this.l10n("glf-check-missing-list"));
 			lines.push(...shown.map(n => "  • " + n));
-			if (s.missing.length > shown.length) {
-				lines.push(this.l10n("glf-check-more", { count: s.missing.length - shown.length }));
+			if (missing.length > shown.length) {
+				lines.push(this.l10n("glf-check-more", { count: missing.length - shown.length }));
 			}
 		}
 		return { status: s, lines };
+	},
+
+	_selectedCollectionID(win) {
+		try {
+			let collection = win.ZoteroPane.getSelectedCollection();
+			return collection ? collection.id : null;
+		}
+		catch (e) {
+			return null;
+		}
+	},
+
+	_itemLabel(item) {
+		let title = item.getField("title") || "";
+		return title.length > 60 ? title.slice(0, 57) + "…" : title;
+	},
+
+	/** "Link Matching Files…": preview, confirm, link */
+	async cmdLink(win, collectionID) {
+		let found;
+		try {
+			found = await this.findMatches({ collectionID });
+		}
+		catch (e) {
+			if (e.l10nId) {
+				this._alert(win, this.l10n(e.l10nId, e.l10nArgs));
+				return;
+			}
+			throw e;
+		}
+		let { matches, skipped, unmatched, checked } = found;
+		let notes = [];
+		if (skipped.length) {
+			notes.push(this.l10n("glf-link-skipped", { count: skipped.length }));
+		}
+		if (!matches.length) {
+			this._alert(win, [this.l10n("glf-link-none", { checked }), ...notes].join("\n\n"));
+			return;
+		}
+		let shown = matches.slice(0, 20);
+		let lines = [
+			this.l10n("glf-link-found", { count: matches.length, checked }),
+			"",
+			...shown.map(m => `${m.file}  →  ${this._itemLabel(m.item)}`),
+		];
+		if (matches.length > shown.length) {
+			lines.push(this.l10n("glf-check-more", { count: matches.length - shown.length }));
+		}
+		if (notes.length) {
+			lines.push("", ...notes);
+		}
+		lines.push("", this.l10n("glf-link-question"));
+		if (!Services.prompt.confirm(win, this.l10n("glf-name"), lines.join("\n"))) {
+			return;
+		}
+		let { linked, errors } = await this.linkMatches(matches);
+		let summary = [this.l10n("glf-link-done", { count: linked })];
+		if (errors.length) {
+			summary.push(this.l10n("glf-check-errors", { list: errors.join(", ") }));
+		}
+		if (unmatched.length) {
+			summary.push(this.l10n("glf-link-unmatched", { count: unmatched.length }));
+		}
+		this._alert(win, summary.join("\n"));
 	},
 
 	async cmdCheck(win) {

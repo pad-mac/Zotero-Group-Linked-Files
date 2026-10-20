@@ -6,6 +6,10 @@ glf-menu-attach =
     .label = Datei aus gemeinsamem Ordner anhängen…
 glf-menu-tools =
     .label = Group Linked Files
+glf-menu-link =
+    .label = Passende Dateien verknüpfen…
+glf-menu-link-collection =
+    .label = Passende Dateien aus gemeinsamem Ordner verknüpfen…
 glf-menu-check =
     .label = Gemeinsamen Ordner jetzt prüfen
 glf-menu-settings =
@@ -31,6 +35,24 @@ glf-confirm-duplicate =
        *[other] { $count } andere Einträge verwenden diese Datei bereits.
     } Trotzdem auch hier anhängen?
 
+## Passende Dateien verknüpfen
+
+glf-link-found = { $count ->
+        [one] 1 passende Datei
+       *[other] { $count } passende Dateien
+    } für { $checked } Einträge ohne Datei gefunden:
+glf-link-question = Jetzt verknüpfen? Es wird nichts kopiert oder umbenannt.
+glf-link-none = Keine passenden Dateien für { $checked } Einträge ohne Datei gefunden.
+glf-link-skipped = { $count ->
+        [one] 1 Eintrag wurde übersprungen, weil schon ein anderer Eintrag mit gleichem Autor und Jahr diese Datei bekommt.
+       *[other] { $count } Einträge wurden übersprungen, weil schon ein anderer Eintrag mit gleichem Autor und Jahr diese Datei bekommt.
+    }
+glf-link-done = { $count ->
+        [one] 1 Datei verknüpft.
+       *[other] { $count } Dateien verknüpft.
+    }
+glf-link-unmatched = Einträge weiterhin ohne Datei: { $count }
+
 ## Fehler
 
 glf-error-no-folder = Auf diesem Computer ist kein gemeinsamer Ordner eingerichtet, oder er wurde nicht gefunden. Wähle ihn unter Einstellungen → Group Linked Files.
@@ -51,6 +73,7 @@ glf-check-counts = { $total } Anhänge · { $found } gefunden · { $missing } fe
 glf-check-published = Soeben in den gemeinsamen Ordner kopiert: { $count }
 glf-check-renamed = Umbenannt, weil der Name schon vergeben war: { $list }
 glf-check-errors = Konnten nicht kopiert werden: { $list }
+glf-check-stranded = Im Zotero-Speicher statt im gemeinsamen Ordner (vermutlich ohne Plugin hinzugefügt): { $count }
 glf-check-missing-list = Fehlende Dateien (auf diesem Computer nicht im gemeinsamen Ordner):
 glf-check-more = …und { $count } weitere
 
@@ -66,3 +89,12 @@ glf-prefs-choose =
 glf-prefs-status-title = Status
 glf-prefs-check =
     .label = Jetzt prüfen
+glf-prefs-naming-title = Dateinamen
+glf-prefs-naming-enabled =
+    .label = Neue Dateien nach diesem Schema benennen
+glf-prefs-naming-help = Platzhalter: { $tokens }. Ist der Name schon vergeben, wird a, b, c … angehängt. „Passende Dateien verknüpfen“ nutzt dasselbe Schema.
+glf-prefs-naming-template = Schema
+glf-prefs-naming-separator = Zwischen Autoren
+glf-prefs-naming-etal = Bei mehr Autoren
+glf-prefs-naming-max = Max. Autoren im Namen
+glf-prefs-naming-preview = Beispiele

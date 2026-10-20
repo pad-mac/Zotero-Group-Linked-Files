@@ -102,6 +102,23 @@ async function run(dir, results, report) {
 	let libraryID = group.libraryID;
 	glf.setPref("groupID", 4711);
 	glf.setPref("basePath", base);
+	// The basic checks use plain filenames; the naming scheme is tested further down
+	glf.setPref("naming.enabled", false);
+
+	let createItem = async (authors, year, { editors = [] } = {}) => {
+		let item = new Zotero.Item("book");
+		item.libraryID = libraryID;
+		item.setField("title", `${authors.concat(editors).join(" / ")} ${year}`);
+		if (year) {
+			item.setField("date", year);
+		}
+		item.setCreators([
+			...authors.map(lastName => ({ firstName: "A.", lastName, creatorType: "author" })),
+			...editors.map(lastName => ({ firstName: "E.", lastName, creatorType: "editor" })),
+		]);
+		await item.saveTx();
+		return item;
+	};
 
 	let parent = new Zotero.Item("book");
 	parent.libraryID = libraryID;
@@ -250,6 +267,101 @@ async function run(dir, results, report) {
 		assert(again === -2, "rename after sharing returned " + again);
 	});
 
+	await check("new files get the naming scheme: Name_Jahr, a/b, A-ua, editors", async () => {
+		glf.setPref("naming.enabled", true);
+		let m1 = await createItem(["Müller"], "1987");
+		let m2 = await createItem(["Müller"], "1987");
+		let w = await createItem(["Weber", "Braun", "Klein"], "2004");
+		let ms = await createItem(["Müller", "Schmidt"], "1990");
+		let ed = await createItem([], "2010", { editors: ["Herausgeberin"] });
+		let imp = parent => Zotero.Attachments.importFromFile({
+			file: PathUtils.join(fixtures, "scan_0042.pdf"),
+			parentItemID: parent.id,
+		});
+		let atts = [];
+		for (let parent of [m1, m2, w, ms, ed]) {
+			atts.push(await imp(parent));
+		}
+		await glf.publishPending({ force: true });
+		let names = atts.map(a => a.attachmentFilename);
+		let expected = ["Müller_1987.pdf", "Müller_1987a.pdf", "Weber-ua_2004.pdf",
+			"Müller-Schmidt_1990.pdf", "Herausgeberin_2010.pdf"];
+		assert(JSON.stringify(names) == JSON.stringify(expected), "names " + JSON.stringify(names));
+		for (let n of expected) {
+			assert(await IOUtils.exists(PathUtils.join(base, n)), "not in shared folder: " + n);
+		}
+		return names;
+	});
+
+	await check("umlauts: file stored in the other Unicode form is found", async () => {
+		let nfc = "Kühn_1999.pdf".normalize("NFC");
+		let nfd = nfc.normalize("NFD");
+		await IOUtils.copy(sharedPDF, PathUtils.join(base, nfd));
+		let parent2 = await createItem(["Kühn"], "1999");
+		let a = new Zotero.Item("attachment");
+		a.libraryID = libraryID;
+		a.parentKey = parent2.key;
+		a.attachmentLinkMode = Zotero.Attachments.LINK_MODE_IMPORTED_FILE;
+		a.attachmentContentType = "application/pdf";
+		a.attachmentPath = "storage:" + nfc;
+		await a.saveTx();
+		let p = await a.getFilePathAsync();
+		assert(p == PathUtils.join(base, nfd), "resolved to " + p);
+	});
+
+	await check("link matching files: scheme name, first item wins, collection scope", async () => {
+		for (let n of ["Braun_1999.pdf", "Braun-Klein_2001.pdf", "Koenig_1975.pdf"]) {
+			await IOUtils.copy(sharedPDF, PathUtils.join(base, n));
+		}
+		let before = await listDir(base);
+		let b1 = await createItem(["Braun"], "1999");
+		let b2 = await createItem(["Braun"], "1999");
+		let bk = await createItem(["Braun", "Klein"], "2001");
+		let ko = await createItem(["König"], "1975");
+		let coll = new Zotero.Collection({ libraryID, name: "Kapitel 3" });
+		await coll.saveTx();
+		bk.addToCollection(coll.id);
+		await bk.saveTx();
+
+		let inColl = await glf.findMatches({ collectionID: coll.id });
+		assert(inColl.matches.length == 1 && inColl.matches[0].file == "Braun-Klein_2001.pdf",
+			"collection scope: " + JSON.stringify(inColl.matches.map(m => m.file)));
+
+		let r = await glf.findMatches();
+		let got = Object.fromEntries(r.matches.map(m => [m.item.id, m.file]));
+		assert(got[b1.id] == "Braun_1999.pdf", "b1 " + got[b1.id]);
+		assert(got[bk.id] == "Braun-Klein_2001.pdf", "bk " + got[bk.id]);
+		assert(got[ko.id] == "Koenig_1975.pdf", "König " + got[ko.id]);
+		assert(!got[b2.id] && r.skipped.some(i => i.id == b2.id), "second Braun 1999 not skipped");
+
+		let { linked } = await glf.linkMatches(r.matches);
+		assert(linked == r.matches.length, "linked " + linked);
+		let att = Zotero.Items.get(b1.getAttachments())[0];
+		assert(await att.getFilePathAsync() == PathUtils.join(base, "Braun_1999.pdf"), "b1 file");
+		assert(JSON.stringify(await listDir(base)) == JSON.stringify(before), "shared folder changed");
+		return { linked, skipped: r.skipped.length, unmatched: r.unmatched.length };
+	});
+
+	await check("files only on Zotero's server (added without plugin) are reported", async () => {
+		let st = new Zotero.Item("attachment");
+		st.libraryID = libraryID;
+		st.parentKey = parent.key;
+		st.attachmentLinkMode = Zotero.Attachments.LINK_MODE_IMPORTED_FILE;
+		st.attachmentContentType = "application/pdf";
+		st.attachmentPath = "storage:Ohne-Plugin_2020.pdf";
+		await st.saveTx();
+		st.version = 7;
+		await st.saveTx();
+		await Zotero.Sync.Data.Local.saveCacheObject("item", libraryID, {
+			key: st.key, version: 7, itemType: "attachment",
+			md5: "0123456789abcdef0123456789abcdef", filename: "Ohne-Plugin_2020.pdf",
+		});
+		let s = await glf.getStatus();
+		assert(s.stranded.includes("Ohne-Plugin_2020.pdf"), "stranded " + JSON.stringify(s.stranded));
+		let { lines } = await glf.describeStatus();
+		return lines;
+	});
+
 	await check("emptying the trash keeps the shared file", async () => {
 		att.deleted = true;
 		await att.saveTx();
@@ -263,6 +375,8 @@ async function run(dir, results, report) {
 		let doc = Zotero.getMainWindow().document;
 		assert(doc.getElementById("glf-itemmenu-attach"), "item menu entry missing");
 		assert(doc.getElementById("glf-tools-menu"), "tools menu missing");
+		assert(doc.getElementById("glf-tools-link"), "link command missing");
+		assert(doc.getElementById("glf-collectionmenu-link"), "collection menu entry missing");
 	});
 
 	await check("localization (de or en) resolves", async () => {
@@ -287,6 +401,7 @@ async function run(dir, results, report) {
 		let menulist = doc.getElementById("glf-group");
 		assert(menulist.value == "4711", "group menulist value " + menulist.value);
 		assert(doc.getElementById("glf-base").value == base, "base path not shown");
+		win.resizeTo(900, 1000);
 		await Zotero.Promise.delay(1000);
 		let shot = Services.prefs.getStringPref("glf-harness.screenshot", "");
 		if (shot) {
@@ -297,9 +412,14 @@ async function run(dir, results, report) {
 			let data = canvas.toDataURL("image/png").split(",")[1];
 			await IOUtils.write(shot, Uint8Array.from(atob(data), c => c.charCodeAt(0)));
 		}
+		let preview = doc.getElementById("glf-naming-preview").textContent;
+		for (let n of ["Müller_1987.pdf", "Müller_1987a.pdf", "Müller-Schmidt_1990.pdf",
+			"Weber-ua_2004.pdf"]) {
+			assert(preview.includes(n), "preview lacks " + n + ": " + preview);
+		}
 		let text = status.textContent;
 		win.close();
-		return text;
+		return { status: text, preview };
 	});
 
 	await check("status summary", async () => {

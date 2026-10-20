@@ -14,8 +14,14 @@ Updates kommen danach automatisch.
 
 - **PDF öffnen**: Doppelklick wie gewohnt. Es öffnet sich im Zotero-Reader.
 - **Anmerkungen**: Markieren und kommentieren wie gewohnt. Sie werden über Zotero synchronisiert, die anderen sehen sie mit deinem Namen.
-- **Neues PDF hinzufügen**: Einfach wie gewohnt in Zotero auf den Eintrag ziehen. Nach etwa einer Minute kopiert das Plugin die Datei in den HU-Box-Ordner.
+- **Neues PDF hinzufügen**: Einfach wie gewohnt in Zotero auf den Eintrag ziehen. Nach etwa einer Minute benennt das Plugin die Datei nach unserem Schema um und kopiert sie in den HU-Box-Ordner:
+  - ein Autor: `Müller_1987.pdf`
+  - zwei Autoren: `Müller-Schmidt_1990.pdf`
+  - mehr als zwei: `Weber-ua_2004.pdf`
+  - gleicher Autor und gleiches Jahr schon vorhanden: `Müller_1987a.pdf`, `Müller_1987b.pdf`
+  - ohne Autoren zählen die Herausgeber, ohne Jahr steht `oJ` im Namen.
 - **PDF, das schon im HU-Box-Ordner liegt, verknüpfen**: Rechtsklick auf den Eintrag → **Datei aus gemeinsamem Ordner anhängen…** → Datei wählen. Es wird nichts kopiert.
+- **Viele PDFs auf einmal verknüpfen**: **Werkzeuge → Group Linked Files → Passende Dateien verknüpfen…** (ganze Gruppe) oder Rechtsklick auf eine Sammlung. Das Plugin sucht für jeden Eintrag ohne Datei eine Datei mit passendem Namen (`Müller_1987`, Groß-/Kleinschreibung und ü/ue egal), zeigt die Liste und verknüpft nach Bestätigung. Gibt es mehrere Einträge mit gleichem Autor und Jahr, bekommt nur der älteste die Datei; `…a`/`…b`-Dateien bitte von Hand anhängen.
 
 ## Bitte nicht
 
@@ -24,7 +30,7 @@ Updates kommen danach automatisch.
 
 ## Wenn etwas nicht klappt
 
-- **Werkzeuge → Group Linked Files → Gemeinsamen Ordner jetzt prüfen** zeigt, welche Dateien fehlen.
+- **Werkzeuge → Group Linked Files → Gemeinsamen Ordner jetzt prüfen** zeigt, welche Dateien fehlen – und welche im Zotero-Speicher statt im HU-Box-Ordner gelandet sind (passiert, wenn jemand ohne Plugin PDFs hinzufügt).
 - **Werkzeuge → Group Linked Files → Problem melden…**
 - Falls das Plugin einmal gar nicht funktioniert: Alle PDFs liegen weiterhin im HU-Box-Ordner, und die Anmerkungen bleiben in Zotero erhalten. Es geht nichts verloren.
 

@@ -224,7 +224,7 @@ describe("attach from shared folder", () => {
 	test("only works in the configured group", async () => {
 		env = makeEnv();
 		fs.writeFileSync(path.join(env.base, "a.pdf"), "a");
-		const parent = env.addParent(env.userLibraryID);
+		const parent = env.addParent({ lib: env.userLibraryID });
 		await assert.rejects(env.glf.attachSharedFile(parent, path.join(env.base, "a.pdf")),
 			{ l10nId: "glf-error-not-group" });
 	});
@@ -240,5 +240,178 @@ describe("shutdown", () => {
 		assert.equal(env.Local.getEnabledForLibrary(env.libraryID), true);
 		assert.ok(!Object.prototype.hasOwnProperty.call(env.Zotero.PDFWorker, "rotatePages")
 			|| env.Zotero.PDFWorker.rotatePages.toString().includes("calls.rotate"));
+	});
+});
+
+describe("umlauts in filenames", () => {
+	test("finds a file stored in the other Unicode form (macOS vs. Windows)", async () => {
+		env = makeEnv();
+		const nfc = "Müller_1987.pdf".normalize("NFC");
+		const nfd = nfc.normalize("NFD");
+		const item = env.addAttachment(nfc);
+		fs.writeFileSync(path.join(env.base, nfd), "S");
+		assert.equal(await item.getFilePathAsync(), path.join(env.base, nfd));
+		assert.equal(item.getFilePath(), path.join(env.base, nfd));
+		assert.equal(await env.glf.isPublished(item), true);
+	});
+});
+
+describe("naming scheme", () => {
+	const fmt = (lastNames, year, extra = {}) => {
+		env = env || makeEnv();
+		const s = { ...env.glf.getNamingSettings(), ...extra };
+		return env.glf.formatBaseName({ lastNames, year, title: "Ein Titel über Magnetbahnen" }, s);
+	};
+
+	test("default: Name_Jahr, A-B_Jahr, A-ua_Jahr", () => {
+		env = makeEnv();
+		assert.equal(fmt(["Müller"], "1987"), "Müller_1987");
+		assert.equal(fmt(["Müller", "Schmidt"], "1990"), "Müller-Schmidt_1990");
+		assert.equal(fmt(["Weber", "Braun", "Klein"], "2004"), "Weber-ua_2004");
+	});
+
+	test("missing year or author, unsafe characters", () => {
+		env = makeEnv();
+		assert.equal(fmt(["Fischer"], ""), "Fischer_oJ");
+		assert.equal(fmt([], "2001"), "oA_2001");
+		assert.equal(fmt(["Mül/ler:"], "1987"), "Müller_1987");
+		assert.equal(fmt(["von der Heide"], "1990"), "von der Heide_1990");
+	});
+
+	test("is configurable", () => {
+		env = makeEnv();
+		assert.equal(fmt(["A", "B", "C"], "2000", { maxAuthors: 3, authorSeparator: "_" }), "A_B_C_2000");
+		assert.equal(fmt(["A", "B", "C"], "2000", { etAl: "et al", template: "{year} {authors}" }),
+			"2000 A-et al");
+		assert.equal(fmt(["A"], "2000", { template: "{authors} {year} - {title}" }),
+			"A 2000 - Ein Titel über Magnetbahnen");
+	});
+
+	test("matchKey ignores case, umlaut spelling and Unicode form", () => {
+		env = makeEnv();
+		const k = s => env.glf.matchKey(s);
+		assert.equal(k("Müller_1987"), k("mueller_1987"));
+		assert.equal(k("Müller_1987".normalize("NFD")), k("MUELLER_1987"));
+		assert.equal(k("Groß_2000"), k("gross_2000"));
+		assert.equal(k("Élise_1999"), k("elise_1999"));
+	});
+});
+
+describe("new files get the scheme name", () => {
+	test("renamed before copying; same author and year gets a, b", async () => {
+		env = makeEnv();
+		const p1 = env.addParent({ authors: ["Müller"], year: "1987" });
+		const p2 = env.addParent({ authors: ["Müller"], year: "1987" });
+		const p3 = env.addParent({ authors: ["Müller"], year: "1987" });
+		const p4 = env.addParent({ authors: ["Weber", "Braun", "Klein"], year: "2004" });
+		const a1 = env.addAttachment("scan1.pdf", { local: "1", parent: p1 });
+		const a2 = env.addAttachment("scan2.pdf", { local: "2", parent: p2 });
+		const a3 = env.addAttachment("scan3.pdf", { local: "3", parent: p3 });
+		const a4 = env.addAttachment("x.pdf", { local: "4", parent: p4 });
+		await env.glf.publishPending();
+		assert.equal(a1.attachmentFilename, "Müller_1987.pdf");
+		assert.equal(a2.attachmentFilename, "Müller_1987a.pdf");
+		assert.equal(a3.attachmentFilename, "Müller_1987b.pdf");
+		assert.equal(a4.attachmentFilename, "Weber-ua_2004.pdf");
+		assert.deepEqual(env.listBase(),
+			["Müller_1987.pdf", "Müller_1987a.pdf", "Müller_1987b.pdf", "Weber-ua_2004.pdf"]);
+		assert.equal(env.readBase("Müller_1987a.pdf"), "2");
+	});
+
+	test("an existing shared file with that name (any spelling) means the next letter", async () => {
+		env = makeEnv();
+		fs.writeFileSync(path.join(env.base, "Mueller_1987.pdf"), "OLD");
+		const p = env.addParent({ authors: ["Müller"], year: "1987" });
+		const a = env.addAttachment("new.pdf", { local: "NEW", parent: p });
+		await env.glf.publishPending();
+		assert.equal(a.attachmentFilename, "Müller_1987a.pdf");
+		assert.equal(env.readBase("Mueller_1987.pdf"), "OLD");
+	});
+
+	test("attachments already named by the scheme are left alone", async () => {
+		env = makeEnv();
+		const p = env.addParent({ authors: ["Müller"], year: "1987" });
+		const a = env.addAttachment("Müller_1987.pdf", { local: "X", shared: "X", parent: p });
+		const r = await env.glf.publishPending();
+		same(r.renamed, []);
+		assert.equal(a.attachmentFilename, "Müller_1987.pdf");
+	});
+
+	test("editors are used when there are no authors", async () => {
+		env = makeEnv();
+		const p = env.addParent({ editors: ["Hrsg"], year: "2010" });
+		const a = env.addAttachment("x.pdf", { local: "X", parent: p });
+		await env.glf.publishPending();
+		assert.equal(a.attachmentFilename, "Hrsg_2010.pdf");
+	});
+
+	test("can be switched off", async () => {
+		env = makeEnv();
+		env.prefs.set("extensions.group-linked-files.naming.enabled", false);
+		const p = env.addParent({ authors: ["Müller"], year: "1987" });
+		const a = env.addAttachment("Original Name.pdf", { local: "X", parent: p });
+		await env.glf.publishPending();
+		assert.equal(a.attachmentFilename, "Original Name.pdf");
+		assert.deepEqual(env.listBase(), ["Original Name.pdf"]);
+	});
+});
+
+describe("link matching files", () => {
+	test("links by scheme name; first item per name wins; others skipped", async () => {
+		env = makeEnv();
+		for (const n of ["Müller_1987.pdf", "Mueller-Schmidt_1990.pdf", "Weber-ua_2004.pdf",
+			"Koenig_1975.pdf", "Müller_1987a.pdf", "Unrelated.pdf"]) {
+			fs.writeFileSync(path.join(env.base, n), n);
+		}
+		const m1 = env.addParent({ authors: ["Müller"], year: "1987" });
+		const m2 = env.addParent({ authors: ["Müller"], year: "1987" });
+		const ms = env.addParent({ authors: ["Müller", "Schmidt"], year: "1990" });
+		const w = env.addParent({ authors: ["Weber", "Braun", "Klein"], year: "2004" });
+		const k = env.addParent({ authors: ["König"], year: "1975" });
+		const none = env.addParent({ authors: ["Niemand"], year: "1950" });
+		const r = await env.glf.findMatches();
+		const got = Object.fromEntries(r.matches.map(m => [m.item.id, m.file]));
+		assert.deepEqual(got, {
+			[m1.id]: "Müller_1987.pdf",
+			[ms.id]: "Mueller-Schmidt_1990.pdf",
+			[w.id]: "Weber-ua_2004.pdf",
+			[k.id]: "Koenig_1975.pdf",
+		});
+		same(r.skipped.map(i => i.id), [m2.id]);
+		same(r.unmatched.map(i => i.id), [none.id]);
+
+		const { linked } = await env.glf.linkMatches(r.matches);
+		assert.equal(linked, 4);
+		const att = env.Zotero.Items.get(m1.getAttachments())[0];
+		assert.equal(await att.getFilePathAsync(), path.join(env.base, "Müller_1987.pdf"));
+		// Nothing in the folder was renamed, moved or added
+		assert.equal(env.listBase().length, 6);
+	});
+
+	test("items that already have a file and files already linked are ignored", async () => {
+		env = makeEnv();
+		fs.writeFileSync(path.join(env.base, "Müller_1987.pdf"), "x");
+		const p = env.addParent({ authors: ["Müller"], year: "1987" });
+		env.addAttachment("Müller_1987.pdf", { parent: p });
+		const other = env.addParent({ authors: ["Müller"], year: "1987" });
+		const r = await env.glf.findMatches();
+		assert.equal(r.matches.length, 0);
+		same(r.unmatched.map(i => i.id), [other.id]);
+	});
+});
+
+describe("stranded files", () => {
+	test("attachments whose file is only on Zotero's server are reported", async () => {
+		env = makeEnv();
+		const stranded = env.addAttachment("ohne-plugin.pdf");
+		stranded.version = 12;
+		env.syncCache.set(stranded.key, { key: stranded.key, version: 12, data: { md5: "abc" } });
+		env.addAttachment("einfach-weg.pdf");
+		env.addAttachment("ok.pdf", { shared: "x" });
+		const s = await env.glf.getStatus();
+		assert.equal(s.total, 3);
+		assert.equal(s.found, 1);
+		same(s.missing.sort(), ["einfach-weg.pdf", "ohne-plugin.pdf"]);
+		same(s.stranded, ["ohne-plugin.pdf"]);
 	});
 });

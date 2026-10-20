@@ -16,3 +16,15 @@ pref("extensions.group-linked-files.publishDelaySeconds", 60);
 // otherwise a prefilled GitHub issue.
 pref("extensions.group-linked-files.reportEmail", "");
 pref("extensions.group-linked-files.reportURL", "https://github.com/pad-mac/Zotero-Group-Linked-Files/issues/new");
+
+// File naming for new files copied into the shared folder, and for
+// "Link Matching Files". Placeholders: {authors}, {year}, {title}.
+// 1 author: Mueller_1987, 2 authors: Mueller-Schmidt_1990, more: Weber-ua_2004.
+// Same name already taken: Mueller_1987a, Mueller_1987b, ...
+pref("extensions.group-linked-files.naming.enabled", true);
+pref("extensions.group-linked-files.naming.template", "{authors}_{year}");
+pref("extensions.group-linked-files.naming.authorSeparator", "-");
+pref("extensions.group-linked-files.naming.etAl", "ua");
+pref("extensions.group-linked-files.naming.maxAuthors", 2);
+pref("extensions.group-linked-files.naming.noYear", "oJ");
+pref("extensions.group-linked-files.naming.noAuthor", "oA");

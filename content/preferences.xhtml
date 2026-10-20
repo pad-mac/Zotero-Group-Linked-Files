@@ -18,6 +18,24 @@
 	</groupbox>
 
 	<groupbox>
+		<label><html:h2 data-l10n-id="glf-prefs-naming-title"/></label>
+		<checkbox id="glf-naming-enabled" data-l10n-id="glf-prefs-naming-enabled"/>
+		<html:p id="glf-naming-help" class="glf-help" data-l10n-id="glf-prefs-naming-help"/>
+		<html:div class="glf-naming-grid">
+			<html:label for="glf-naming-template" data-l10n-id="glf-prefs-naming-template"/>
+			<html:input type="text" id="glf-naming-template" spellcheck="false"/>
+			<html:label for="glf-naming-separator" data-l10n-id="glf-prefs-naming-separator"/>
+			<html:input type="text" id="glf-naming-separator" class="glf-short" spellcheck="false"/>
+			<html:label for="glf-naming-etal" data-l10n-id="glf-prefs-naming-etal"/>
+			<html:input type="text" id="glf-naming-etal" class="glf-short" spellcheck="false"/>
+			<html:label for="glf-naming-max" data-l10n-id="glf-prefs-naming-max"/>
+			<html:input type="number" id="glf-naming-max" class="glf-short" min="1" max="10"/>
+		</html:div>
+		<label class="glf-label" data-l10n-id="glf-prefs-naming-preview"/>
+		<html:pre id="glf-naming-preview" class="glf-preview"></html:pre>
+	</groupbox>
+
+	<groupbox>
 		<label><html:h2 data-l10n-id="glf-prefs-status-title"/></label>
 		<html:pre id="glf-status" class="glf-status"></html:pre>
 		<hbox>

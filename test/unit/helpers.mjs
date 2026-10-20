@@ -23,13 +23,16 @@ export function makeEnv({ groupID = 4711, libraryID = 2, userLibraryID = 1 } = {
 	const prefs = new Map();
 	const items = new Map();
 	const calls = { rotate: 0, deletePages: 0, import: [], indexPDF: [], notices: [] };
+	const syncCache = new Map();
+	let clock = 0;
 
 	const IOUtils = {
 		exists: async p => fs.existsSync(p),
 		stat: async (p) => {
 			const s = await fsp.stat(p);
-			return { size: s.size, lastModified: s.mtimeMs };
+			return { size: s.size, lastModified: s.mtimeMs, type: s.isDirectory() ? "directory" : "regular" };
 		},
+		getChildren: async p => fs.readdirSync(p).map(n => path.join(p, n)),
 		copy: async (a, b, opts = {}) => {
 			if (opts.noOverwrite && fs.existsSync(b)) {
 				throw new Error("exists");
@@ -55,9 +58,26 @@ export function makeEnv({ groupID = 4711, libraryID = 2, userLibraryID = 1 } = {
 			this.attachmentContentType = "";
 			this.parentKey = null;
 			this.dateModified = "2000-01-01 00:00:00";
+			this.dateAdded = `2000-01-01 00:00:${String(clock++).padStart(2, "0")}`;
 			this.fields = {};
+			this.creators = [];
+			this.parentItemID = null;
+			this.version = 0;
+			this.deleted = false;
+			this.itemTypeID = 1;
 			this._identified = true;
 		}
+		get parentKey() { return this._parentKey || null; }
+		set parentKey(k) {
+			this._parentKey = k;
+			const parent = [...items.values()].find(i => i.key == k);
+			this.parentItemID = parent ? parent.id : null;
+		}
+		getCreators() { return this.creators; }
+		getAttachments() {
+			return [...items.values()].filter(i => i.parentItemID == this.id && i.isAttachment()).map(i => i.id);
+		}
+		isFileAttachment() { return this.isAttachment() && this.attachmentLinkMode != LINK_MODE_LINKED_URL; }
 		get libraryKey() { return `${this.libraryID}/${this.key}`; }
 		get attachmentFilename() { return this.attachmentPath.replace(/^storage:/, ""); }
 		isAttachment() { return this.itemType == "attachment"; }
@@ -65,7 +85,7 @@ export function makeEnv({ groupID = 4711, libraryID = 2, userLibraryID = 1 } = {
 		isStoredFileAttachment() { return this.isAttachment() && this.attachmentLinkMode == LINK_MODE_IMPORTED_FILE; }
 		isEmbeddedImageAttachment() { return false; }
 		setField(k, v) { this.fields[k] = v; }
-		getField(k) { return this.fields[k]; }
+		getField(k) { return this.fields[k] ?? ""; }
 		async saveTx() { items.set(this.id, this); return this.id; }
 		_updateAttachmentStates(v) { this._fileExists = v; }
 		// --- simplified copies of Zotero's own behaviour
@@ -124,7 +144,7 @@ export function makeEnv({ groupID = 4711, libraryID = 2, userLibraryID = 1 } = {
 		},
 		Libraries: { userLibraryID, get: () => ({ waitForDataLoad: async () => {} }) },
 		Items: {
-			get: id => items.get(id),
+			get: id => (Array.isArray(id) ? id.map(i => items.get(i)) : items.get(id)),
 			getAsync: async id => items.get(id),
 			getAll: async lib => [...items.values()].filter(i => i.libraryID == lib),
 		},
@@ -138,14 +158,25 @@ export function makeEnv({ groupID = 4711, libraryID = 2, userLibraryID = 1 } = {
 			getValidFileName: n => n.replace(/[/\\?%*:|"<>]/g, ""),
 			createDirectoryIfMissingAsync: async p => fs.mkdirSync(p, { recursive: true }),
 		},
-		Date: { sqlToDate: s => new Date(s.replace(" ", "T") + "Z") },
+		Date: {
+			sqlToDate: s => new Date(s.replace(" ", "T") + "Z"),
+			multipartToSQL: s => s,
+		},
+		CreatorTypes: {
+			getPrimaryIDForType: () => 1,
+			getID: name => (name == "editor" ? 2 : 1),
+		},
+		Collections: { get: () => null },
 		Utilities: {
 			Internal: {
 				md5Async: async p => crypto.createHash("md5").update(fs.readFileSync(p)).digest("hex"),
 			},
 		},
 		MIME: { getMIMETypeFromFile: async () => "application/octet-stream" },
-		Sync: { Storage: { Local } },
+		Sync: {
+			Storage: { Local },
+			Data: { Local: { getCacheObject: async (type, lib, key) => syncCache.get(key) || false } },
+		},
 		Fulltext,
 		PDFWorker,
 		ProgressWindow: class {
@@ -171,10 +202,19 @@ export function makeEnv({ groupID = 4711, libraryID = 2, userLibraryID = 1 } = {
 	prefs.set("extensions.group-linked-files.groupID", groupID);
 	prefs.set("extensions.group-linked-files.basePath", base);
 	prefs.set("extensions.group-linked-files.publishDelaySeconds", 0);
+	for (const line of fs.readFileSync(path.join(path.dirname(SRC), "../prefs.js"), "utf8").split("\n")) {
+		const m = line.match(/^pref\("([^"]+)",\s*(.+)\);/);
+		if (m && m[1].includes(".naming.")) {
+			prefs.set(m[1], JSON.parse(m[2]));
+		}
+	}
 
-	function addAttachment(name, { lib = libraryID, local = null, shared = null } = {}) {
+	function addAttachment(name, { lib = libraryID, local = null, shared = null, parent = null } = {}) {
 		const item = new Item("attachment");
 		item.libraryID = lib;
+		if (parent) {
+			item.parentKey = parent.key;
+		}
 		item.attachmentPath = "storage:" + name;
 		items.set(item.id, item);
 		if (local != null) {
@@ -187,9 +227,15 @@ export function makeEnv({ groupID = 4711, libraryID = 2, userLibraryID = 1 } = {
 		return item;
 	}
 
-	function addParent(lib = libraryID) {
+	function addParent({ lib = libraryID, authors = [], editors = [], year = "" } = {}) {
 		const item = new Item("book");
 		item.libraryID = lib;
+		item.creators = [
+			...authors.map(lastName => ({ lastName, firstName: "X", creatorTypeID: 1 })),
+			...editors.map(lastName => ({ lastName, firstName: "X", creatorTypeID: 2 })),
+		];
+		item.fields.date = year ? `${year}-00-00` : "";
+		item.fields.title = `${authors.join("/")} ${year}`;
 		items.set(item.id, item);
 		return item;
 	}
@@ -198,7 +244,7 @@ export function makeEnv({ groupID = 4711, libraryID = 2, userLibraryID = 1 } = {
 	const readBase = n => fs.readFileSync(path.join(base, n), "utf8");
 
 	return {
-		glf, Zotero, Item, Local, Fulltext, PDFWorker, calls, prefs, items,
+		glf, Zotero, Item, Local, Fulltext, PDFWorker, calls, prefs, items, syncCache,
 		tmp, storage, base, groupID, libraryID, userLibraryID,
 		addAttachment, addParent, listBase, readBase,
 		cleanup: () => fs.rmSync(tmp, { recursive: true, force: true }),

@@ -6,6 +6,10 @@ glf-menu-attach =
     .label = Attach File from Shared Folder…
 glf-menu-tools =
     .label = Group Linked Files
+glf-menu-link =
+    .label = Link Matching Files…
+glf-menu-link-collection =
+    .label = Link Matching Files from Shared Folder…
 glf-menu-check =
     .label = Check Shared Folder Now
 glf-menu-settings =
@@ -31,6 +35,24 @@ glf-confirm-duplicate =
        *[other] { $count } other items already use this file.
     } Attach it here as well?
 
+## Link matching files
+
+glf-link-found = { $count ->
+        [one] Found 1 matching file
+       *[other] Found { $count } matching files
+    } for { $checked } items without a file:
+glf-link-question = Link them now? Nothing is copied or renamed.
+glf-link-none = No matching files found for { $checked } items without a file.
+glf-link-skipped = { $count ->
+        [one] 1 item was skipped because another item with the same author and year already gets that file.
+       *[other] { $count } items were skipped because another item with the same author and year already gets that file.
+    }
+glf-link-done = { $count ->
+        [one] Linked 1 file.
+       *[other] Linked { $count } files.
+    }
+glf-link-unmatched = Items still without a file: { $count }
+
 ## Errors
 
 glf-error-no-folder = No shared folder is set up on this computer, or it can’t be found. Choose it under Settings → Group Linked Files.
@@ -51,6 +73,7 @@ glf-check-counts = { $total } attachments · { $found } found · { $missing } mi
 glf-check-published = Copied to the shared folder just now: { $count }
 glf-check-renamed = Renamed because the name was taken: { $list }
 glf-check-errors = Could not be copied: { $list }
+glf-check-stranded = In Zotero Storage instead of the shared folder (probably added without the plugin): { $count }
 glf-check-missing-list = Missing files (not in the shared folder on this computer):
 glf-check-more = …and { $count } more
 
@@ -66,3 +89,12 @@ glf-prefs-choose =
 glf-prefs-status-title = Status
 glf-prefs-check =
     .label = Check Now
+glf-prefs-naming-title = File Names
+glf-prefs-naming-enabled =
+    .label = Name new files with this scheme
+glf-prefs-naming-help = Placeholders: { $tokens }. If the name is taken, a, b, c … is added. “Link Matching Files” uses the same scheme.
+glf-prefs-naming-template = Scheme
+glf-prefs-naming-separator = Between authors
+glf-prefs-naming-etal = For more authors
+glf-prefs-naming-max = Max. authors in name
+glf-prefs-naming-preview = Examples
