@@ -59,12 +59,15 @@ glf-error-no-folder = No shared folder is set up on this computer, or it can’t
 glf-error-not-group = Select a single item in the shared group library first.
 glf-error-not-in-folder = The file has to be directly in the shared folder, not in a subfolder or anywhere else.
 glf-error-invalid-name = Zotero can’t use this filename. Please rename the file in the shared folder (avoid / \ : * ? " < > |) and try again.
+glf-error-choose-library = Select the library or a collection of a linked group first.
+glf-config-no-group = No group chosen for this link yet.
+glf-check-no-folder = No shared folder chosen on this computer.
 glf-error-file-missing = The file can’t be found anymore.
 glf-error-generic = Something went wrong: { $message }
 
 ## Status (Tools menu and settings)
 
-glf-not-configured = Not set up yet. Choose the group and the shared folder under Settings → Group Linked Files.
+glf-not-configured = No group linked yet. Add one under Settings → Group Linked Files.
 glf-group-not-found = The selected group (ID { $id }) isn’t in this Zotero library yet. Sync first.
 glf-check-group = Group: { $name }
 glf-check-folder = Shared folder: { $path }
@@ -79,7 +82,7 @@ glf-check-more = …and { $count } more
 
 ## Settings pane
 
-glf-prefs-intro = The selected group keeps its files in a shared folder (for example HU-Box) instead of Zotero Storage. Files still open in Zotero’s reader, and annotations sync through Zotero as usual. Zotero file syncing is turned off for this group only.
+glf-prefs-intro = Each linked group keeps its files in a shared folder (for example HU-Box) instead of Zotero Storage. Files still open in Zotero’s reader, and annotations sync through Zotero as usual. Zotero file syncing is turned off for linked groups only. Each group has its own folder and file naming.
 glf-prefs-group = Group
 glf-prefs-group-none =
     .label = — None —
@@ -102,3 +105,13 @@ glf-prefs-naming-transliterate =
     .label = Replace umlauts (ü → ue, ß → ss)
 glf-prefs-naming-lowercase =
     .label = All lowercase
+glf-prefs-links = Linked groups
+glf-prefs-add =
+    .label = Add Group…
+glf-prefs-remove =
+    .label = Remove
+glf-prefs-empty = No group linked yet. Click “Add Group…” to link a group with a shared folder.
+glf-prefs-config-nogroup = (no group chosen)
+glf-prefs-config-nofolder = no folder
+glf-prefs-remove-confirm = Remove the link for “{ $name }”? Files and items stay as they are; only this computer’s settings for the group are removed, and Zotero file syncing applies to the group again.
+glf-prefs-same-folder = Another linked group uses the same folder. That works, but file names of both groups then share one folder.

@@ -59,12 +59,15 @@ glf-error-no-folder = Auf diesem Computer ist kein gemeinsamer Ordner eingericht
 glf-error-not-group = Wähle zuerst genau einen Eintrag in der gemeinsamen Gruppenbibliothek aus.
 glf-error-not-in-folder = Die Datei muss direkt im gemeinsamen Ordner liegen, nicht in einem Unterordner oder anderswo.
 glf-error-invalid-name = Zotero kann diesen Dateinamen nicht verwenden. Bitte benenne die Datei im gemeinsamen Ordner um (ohne / \ : * ? " < > |) und versuche es erneut.
+glf-error-choose-library = Wähle zuerst die Bibliothek oder eine Sammlung einer verknüpften Gruppe aus.
+glf-config-no-group = Für diese Verknüpfung ist noch keine Gruppe gewählt.
+glf-check-no-folder = Auf diesem Computer ist noch kein gemeinsamer Ordner gewählt.
 glf-error-file-missing = Die Datei ist nicht mehr auffindbar.
 glf-error-generic = Etwas ist schiefgegangen: { $message }
 
 ## Status (Werkzeuge-Menü und Einstellungen)
 
-glf-not-configured = Noch nicht eingerichtet. Wähle Gruppe und gemeinsamen Ordner unter Einstellungen → Group Linked Files.
+glf-not-configured = Noch keine Gruppe verknüpft. Unter Einstellungen → Group Linked Files hinzufügen.
 glf-group-not-found = Die gewählte Gruppe (ID { $id }) ist in diesem Zotero noch nicht vorhanden. Bitte zuerst synchronisieren.
 glf-check-group = Gruppe: { $name }
 glf-check-folder = Gemeinsamer Ordner: { $path }
@@ -79,7 +82,7 @@ glf-check-more = …und { $count } weitere
 
 ## Einstellungen
 
-glf-prefs-intro = Die gewählte Gruppe speichert ihre Dateien in einem gemeinsamen Ordner (z. B. HU-Box) statt im Zotero-Speicher. Die Dateien öffnen sich trotzdem im Zotero-Reader, Anmerkungen werden wie gewohnt über Zotero synchronisiert. Die Zotero-Dateisynchronisierung ist nur für diese Gruppe ausgeschaltet.
+glf-prefs-intro = Jede verknüpfte Gruppe speichert ihre Dateien in einem gemeinsamen Ordner (z. B. HU-Box) statt im Zotero-Speicher. Die Dateien öffnen sich trotzdem im Zotero-Reader, Anmerkungen werden wie gewohnt über Zotero synchronisiert. Die Zotero-Dateisynchronisierung ist nur für verknüpfte Gruppen ausgeschaltet. Jede Gruppe hat ihren eigenen Ordner und ihre eigene Dateibenennung.
 glf-prefs-group = Gruppe
 glf-prefs-group-none =
     .label = — Keine —
@@ -102,3 +105,13 @@ glf-prefs-naming-transliterate =
     .label = Umlaute ersetzen (ü → ue, ß → ss)
 glf-prefs-naming-lowercase =
     .label = Alles kleinschreiben
+glf-prefs-links = Verknüpfte Gruppen
+glf-prefs-add =
+    .label = Gruppe hinzufügen…
+glf-prefs-remove =
+    .label = Entfernen
+glf-prefs-empty = Noch keine Gruppe verknüpft. Mit „Gruppe hinzufügen…“ eine Gruppe mit einem gemeinsamen Ordner verknüpfen.
+glf-prefs-config-nogroup = (keine Gruppe gewählt)
+glf-prefs-config-nofolder = kein Ordner
+glf-prefs-remove-confirm = Verknüpfung für „{ $name }“ entfernen? Dateien und Einträge bleiben, wie sie sind; nur die Einstellungen dieses Computers für die Gruppe werden entfernt, und die Zotero-Dateisynchronisierung gilt wieder für die Gruppe.
+glf-prefs-same-folder = Eine andere verknüpfte Gruppe nutzt denselben Ordner. Das geht, aber die Dateinamen beider Gruppen teilen sich dann einen Ordner.

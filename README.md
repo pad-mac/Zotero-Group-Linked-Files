@@ -15,7 +15,7 @@ German team guide: [docs/ANLEITUNG.md](docs/ANLEITUNG.md)
 
 - Attachments in the group are ordinary *stored-file* attachments. Their **filename is the link**: `<shared folder>/<filename>`. Zotero syncs the filename; the file itself never goes to Zotero's servers.
 - If Zotero can't find a stored file in its own storage folder, the plugin resolves it to the shared folder. The reader, full-text indexing and "Show File" all use that path.
-- **Zotero file syncing is switched off for this one group only.** Other groups and My Library are unaffected, and nobody has to change Zotero settings.
+- **Several groups can be linked, each with its own folder and file naming.** Zotero file syncing is switched off for linked groups only. Other groups and My Library are unaffected, and nobody has to change Zotero settings.
 - A PDF added to the group the normal way (drag & drop, Add File) is **renamed with the group's naming scheme and copied into the shared folder** about a minute later.
 - Existing PDFs in the shared folder are attached with **right-click → "Attach File from Shared Folder…"**, or all at once with **"Link Matching Files…"** (see below) – nothing is copied.
 - Filenames are found in either Unicode form (macOS often stores "ü" differently from Windows).
@@ -33,11 +33,11 @@ New files get a name from the parent item, independent of Zotero's own naming se
 | Groß 2001 | `gross_2001.pdf` |
 | no year | `fischer_oj.pdf` |
 
-Umlauts become ae/oe/ue/ss, other accents are dropped, and everything is lowercase (both can be switched off). Authors are used, otherwise editors. Scheme (`{authors}`, `{year}`, `{title}`), separator, "et al." text and the number of authors before "ua" are set under *Settings → Group Linked Files*, with a live preview. Files already in the shared folder are never renamed.
+Umlauts become ae/oe/ue/ss, other accents are dropped, and everything is lowercase (both can be switched off). Authors are used, otherwise editors. Scheme (`{authors}`, `{year}`, `{title}`), separator, "et al." text and the number of authors before "ua" are set per group under *Settings → Group Linked Files*, with a live preview. Files already in the shared folder are never renamed.
 
 ## Link matching files
 
-*Tools → Group Linked Files → Link Matching Files…* (whole group) or right-click a collection (that collection and its subcollections): for every item **without a file**, the plugin computes its scheme name and looks for a file with that name in the shared folder (any extension, PDF preferred; case, Unicode form and ü/ue spelling don't matter). You see the list and confirm; then the files are attached. Nothing is copied or renamed.
+*Tools → Group Linked Files → Link Matching Files…* (the selected linked group's whole library) or right-click a collection (that collection and its subcollections): for every item **without a file**, the plugin computes its scheme name and looks for a file with that name in the shared folder (any extension, PDF preferred; case, Unicode form and ü/ue spelling don't matter). You see the list and confirm; then the files are attached. Nothing is copied or renamed.
 
 If several items share author and year, only the oldest one gets `Name_Jahr` – the others are skipped and listed. `…a`/`…b` files aren't assigned automatically, because there's no way to know which is which.
 
@@ -62,7 +62,9 @@ Every one of these is covered by automated tests that run inside real Zotero bui
 
 1. Download `group-linked-files-x.y.z.xpi` from the [latest release](https://github.com/pad-mac/Zotero-Group-Linked-Files/releases/latest).
 2. In Zotero: **Tools → Plugins → ⚙ → Install Plugin From File…** and choose the file.
-3. **Settings → Group Linked Files**: choose the group and the shared folder on this computer.
+3. **Settings → Group Linked Files → Add Group…**: choose the group and its shared folder on this computer, and adjust the file naming if needed. Repeat for every group that should keep its files in a shared folder. "Remove" unlinks a group again (files and items stay as they are; Zotero file syncing applies to it again).
+
+Settings are stored per computer as a list of group links (`extensions.group-linked-files.groups`); settings from version 0.2 are migrated automatically.
 
 Updates install automatically. Every team member needs the plugin; without it, the group's PDFs can't be opened in Zotero on that computer (they're still in the shared folder).
 
@@ -86,7 +88,7 @@ ZOTERO_CHANNEL=beta npm run test:zotero
 ZOTERO_VERSION=7.0.24 npm run test:zotero
 ```
 
-The integration test installs the built `.xpi` into a fresh Zotero profile, creates a group, and checks: attaching from the folder, opening in the reader, saving annotations, full-text indexing, every guardrail, the per-group sync switch, copying and naming new files (a/b, ua, editors), Unicode filename forms, linking matching files (incl. collection scope), detecting files stuck in Zotero Storage, trash handling, menus, the settings pane, localization and clean shutdown.
+The integration test installs the built `.xpi` into a fresh Zotero profile, creates a group, and checks: attaching from the folder, opening in the reader, saving annotations, full-text indexing, every guardrail, the per-group sync switch, copying and naming new files (a/b, ua, editors), Unicode filename forms, linking matching files (incl. collection scope), detecting files stuck in Zotero Storage, a second linked group with its own folder and naming, migrating 0.2 settings, removing a link, trash handling, menus, the settings pane, localization and clean shutdown.
 
 Tested with Zotero **7.0.24, 9.0.6, 10.0.6 and 11.0 beta 1**.
 

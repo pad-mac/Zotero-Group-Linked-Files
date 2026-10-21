@@ -6,7 +6,7 @@ Unsere PDFs liegen im gemeinsamen HU-Box-Ordner. Mit dem Plugin öffnen sie sich
 
 1. **HU-Box-Ordner synchronisieren**: Der gemeinsame Ordner muss mit dem Seafile-Client auf deinem Computer synchronisiert sein.
 2. **Plugin installieren**: Die Datei `group-linked-files-….xpi` aus dem [neuesten Release](https://github.com/pad-mac/Zotero-Group-Linked-Files/releases/latest) herunterladen. In Zotero: **Werkzeuge → Plugins → Zahnrad ⚙ → „Add-on aus Datei installieren…“** und die Datei wählen.
-3. **Einstellen**: Zotero-Einstellungen → **Group Linked Files** → Gruppe wählen → gemeinsamen Ordner wählen. Unter „Status“ sollte stehen, wie viele Dateien gefunden wurden.
+3. **Einstellen**: Zotero-Einstellungen → **Group Linked Files** → **Gruppe hinzufügen…** → Gruppe wählen → gemeinsamen Ordner wählen. Unter „Status“ sollte stehen, wie viele Dateien gefunden wurden. Für weitere Gruppen mit eigenem Ordner einfach noch eine Gruppe hinzufügen – Ordner und Dateibenennung gelten jeweils nur für diese Gruppe.
 
 Updates kommen danach automatisch.
 
@@ -21,7 +21,7 @@ Updates kommen danach automatisch.
   - gleicher Autor und gleiches Jahr schon vorhanden: `mueller_1987a.pdf`, `mueller_1987b.pdf`
   - alles klein, Umlaute als ae/oe/ue/ss; ohne Autoren zählen die Herausgeber, ohne Jahr steht `oj` im Namen.
 - **PDF, das schon im HU-Box-Ordner liegt, verknüpfen**: Rechtsklick auf den Eintrag → **Datei aus gemeinsamem Ordner anhängen…** → Datei wählen. Es wird nichts kopiert.
-- **Viele PDFs auf einmal verknüpfen**: **Werkzeuge → Group Linked Files → Passende Dateien verknüpfen…** (ganze Gruppe) oder Rechtsklick auf eine Sammlung. Das Plugin sucht für jeden Eintrag ohne Datei eine Datei mit passendem Namen (`mueller_1987`; Groß-/Kleinschreibung und ü/ue sind dabei egal), zeigt die Liste und verknüpft nach Bestätigung. Gibt es mehrere Einträge mit gleichem Autor und Jahr, bekommt nur der älteste die Datei; `…a`/`…b`-Dateien bitte von Hand anhängen.
+- **Viele PDFs auf einmal verknüpfen**: **Werkzeuge → Group Linked Files → Passende Dateien verknüpfen…** (ganze ausgewählte Gruppe) oder Rechtsklick auf eine Sammlung. Das Plugin sucht für jeden Eintrag ohne Datei eine Datei mit passendem Namen (`mueller_1987`; Groß-/Kleinschreibung und ü/ue sind dabei egal), zeigt die Liste und verknüpft nach Bestätigung. Gibt es mehrere Einträge mit gleichem Autor und Jahr, bekommt nur der älteste die Datei; `…a`/`…b`-Dateien bitte von Hand anhängen.
 
 ## Bitte nicht
 

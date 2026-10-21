@@ -58,6 +58,18 @@ var GroupLinkedFiles = {
 
 	// ------------------------------------------------------------------ settings
 
+	DEFAULT_NAMING: {
+		enabled: true,
+		template: "{authors}_{year}",
+		authorSeparator: "-",
+		etAl: "ua",
+		maxAuthors: 2,
+		noYear: "oJ",
+		noAuthor: "oA",
+		transliterate: true,
+		lowercase: true,
+	},
+
 	getPref(name) {
 		return Zotero.Prefs.get(this.PREF + name, true);
 	},
@@ -66,24 +78,104 @@ var GroupLinkedFiles = {
 		Zotero.Prefs.set(this.PREF + name, value, true);
 	},
 
-	/** Zotero group ID (stable across computers), or null */
-	getGroupID() {
-		let id = parseInt(this.getPref("groupID"));
-		return id > 0 ? id : null;
+	/**
+	 * Group links, one per group: [{ id, groupID, basePath, naming }]. Stored as JSON in
+	 * extensions.group-linked-files.groups on each computer (the folder path differs per
+	 * computer anyway).
+	 */
+	getConfigs() {
+		let raw = this.getPref("groups");
+		if (typeof raw != "string" || !raw.trim()) {
+			raw = "[]";
+		}
+		if (this._configCache && this._configCache.raw === raw) {
+			return this._configCache.list;
+		}
+		let list;
+		try {
+			list = JSON.parse(raw);
+		}
+		catch (e) {
+			Zotero.logError(e);
+			list = [];
+		}
+		if (!Array.isArray(list)) {
+			list = [];
+		}
+		list = list.filter(c => c && typeof c == "object").map(c => this._normalizeConfig(c));
+		this._configCache = { raw, list };
+		return list;
 	},
 
-	/** Local library ID of the configured group, or null if not set / not synced here */
-	getLibraryID() {
-		let groupID = this.getGroupID();
-		if (!groupID) {
+	_normalizeConfig(c) {
+		let naming = (c.naming && typeof c.naming == "object") ? c.naming : {};
+		return {
+			id: typeof c.id == "string" && c.id ? c.id : Math.random().toString(36).slice(2, 10),
+			groupID: parseInt(c.groupID) > 0 ? parseInt(c.groupID) : 0,
+			basePath: typeof c.basePath == "string" ? c.basePath : "",
+			naming: { ...this.DEFAULT_NAMING, ...naming },
+		};
+	},
+
+	setConfigs(list) {
+		this.setPref("groups", JSON.stringify(list.map(c => this._normalizeConfig(c))));
+		this._configCache = null;
+	},
+
+	getConfigByID(id) {
+		return this.getConfigs().find(c => c.id == id) || null;
+	},
+
+	addConfig(partial = {}) {
+		let config = this._normalizeConfig(partial);
+		this.setConfigs([...this.getConfigs(), config]);
+		return config;
+	},
+
+	/** Merge a patch into one group link (naming is merged key by key) */
+	updateConfig(id, patch) {
+		let list = this.getConfigs().map(c => (c.id != id ? c : this._normalizeConfig({
+			...c,
+			...patch,
+			naming: { ...c.naming, ...(patch.naming || {}) },
+		})));
+		this.setConfigs(list);
+		return this.getConfigByID(id);
+	},
+
+	removeConfig(id) {
+		this.setConfigs(this.getConfigs().filter(c => c.id != id));
+	},
+
+	/** Local library ID of a group link, or null if the group isn't on this computer */
+	getLibraryIDForConfig(config) {
+		if (!config || !config.groupID) {
 			return null;
 		}
-		return Zotero.Groups.getLibraryIDFromGroupID(groupID) || null;
+		return Zotero.Groups.getLibraryIDFromGroupID(config.groupID) || null;
 	},
 
-	/** Normalized absolute path of the shared folder on this computer, or null */
-	getBasePath() {
-		let path = this.getPref("basePath");
+	/** Group link for a local library ID, or null */
+	getConfig(libraryID) {
+		if (!libraryID) {
+			return null;
+		}
+		for (let config of this.getConfigs()) {
+			if (config.groupID && this.getLibraryIDForConfig(config) === libraryID) {
+				return config;
+			}
+		}
+		return null;
+	},
+
+	/** Group links whose group exists on this computer, with their libraryID */
+	getActiveConfigs() {
+		return this.getConfigs()
+			.map(c => ({ ...c, libraryID: this.getLibraryIDForConfig(c) }))
+			.filter(c => c.libraryID);
+	},
+
+	normalizePath(path) {
 		if (typeof path != "string" || !path.trim()) {
 			return null;
 		}
@@ -95,24 +187,55 @@ var GroupLinkedFiles = {
 		}
 	},
 
-	isManagedLibrary(libraryID) {
-		let managed = this.getLibraryID();
-		return !!managed && libraryID === managed;
+	/** Normalized shared folder of the library's group link on this computer, or null */
+	getBasePath(libraryID) {
+		let config = this.getConfig(libraryID);
+		return config ? this.normalizePath(config.basePath) : null;
 	},
 
-	/** A stored-file attachment in the configured group, with a shared folder set */
+	isManagedLibrary(libraryID) {
+		return !!this.getConfig(libraryID);
+	},
+
+	/** A stored-file attachment in a linked group whose shared folder is set */
 	isManagedItem(item) {
 		try {
 			return !!item
 				&& item.isAttachment()
 				&& item.isStoredFileAttachment()
 				&& !(item.isEmbeddedImageAttachment && item.isEmbeddedImageAttachment())
-				&& this.isManagedLibrary(item.libraryID)
-				&& !!this.getBasePath();
+				&& !!this.getBasePath(item.libraryID);
 		}
 		catch (e) {
 			return false;
 		}
+	},
+
+	/**
+	 * Before 0.3 there was one group: groupID, basePath and naming.* prefs.
+	 * Turn those into the first group link.
+	 */
+	migrateLegacyPrefs() {
+		let groupID = parseInt(this.getPref("groupID"));
+		if (!(groupID > 0) || this.getConfigs().length) {
+			return false;
+		}
+		let naming = {};
+		for (let key of Object.keys(this.DEFAULT_NAMING)) {
+			let value = this.getPref("naming." + key);
+			if (value !== undefined) {
+				naming[key] = value;
+			}
+		}
+		this.setConfigs([{ groupID, basePath: this.getPref("basePath") || "", naming }]);
+		for (let name of ["groupID", "basePath", ...Object.keys(this.DEFAULT_NAMING).map(k => "naming." + k)]) {
+			try {
+				Zotero.Prefs.clear(this.PREF + name, true);
+			}
+			catch (e) {}
+		}
+		this.log(`migrated settings for group ${groupID}`);
+		return true;
 	},
 
 	isValidSharedFilename(name) {
@@ -133,7 +256,7 @@ var GroupLinkedFiles = {
 		if (!this.isValidSharedFilename(name)) {
 			return null;
 		}
-		return PathUtils.join(this.getBasePath(), name);
+		return PathUtils.join(this.getBasePath(item.libraryID), name);
 	},
 
 	/** Path of the attachment in Zotero's own storage folder (may not exist) */
@@ -159,7 +282,7 @@ var GroupLinkedFiles = {
 		if (!path) {
 			return [];
 		}
-		let base = this.getBasePath();
+		let base = this.getBasePath(item.libraryID);
 		return this._nameVariants(PathUtils.filename(path)).map(n => PathUtils.join(base, n));
 	},
 
@@ -193,9 +316,9 @@ var GroupLinkedFiles = {
 		return (Zotero.isMac || Zotero.isWin) ? p.toLowerCase() : p;
 	},
 
-	/** True if path is a file directly inside the shared folder (flat layout) */
-	isInBase(path) {
-		let base = this.getBasePath();
+	/** True if path is a file directly inside the library's shared folder (flat layout) */
+	isInBase(path, libraryID) {
+		let base = this.getBasePath(libraryID);
 		if (!base || !path) {
 			return false;
 		}
@@ -220,6 +343,12 @@ var GroupLinkedFiles = {
 
 	async startup() {
 		this._active = true;
+		try {
+			this.migrateLegacyPrefs();
+		}
+		catch (e) {
+			Zotero.logError(e);
+		}
 		this.installPatches();
 		Zotero.GroupLinkedFiles = this;
 		await this.registerPrefPane();
@@ -397,12 +526,13 @@ var GroupLinkedFiles = {
 		let FT = Zotero.Fulltext || Zotero.FullText;
 		if (FT && typeof FT.indexPDF == "function") {
 			this._patch(FT, "indexPDF", orig => async function (filePath, itemID, ...rest) {
-				if (self._active && filePath && self.isInBase(filePath)) {
+				let item = null;
+				try {
+					item = self._active && filePath ? await Zotero.Items.getAsync(itemID) : null;
+				}
+				catch (e) {}
+				if (item && self.isManagedItem(item) && self.isInBase(filePath, item.libraryID)) {
 					try {
-						let item = await Zotero.Items.getAsync(itemID);
-						if (!item || !self.isManagedItem(item)) {
-							return false;
-						}
 						let dir = Zotero.Attachments.getStorageDirectory(item).path;
 						await Zotero.File.createDirectoryIfMissingAsync(dir);
 						filePath = PathUtils.join(dir, PathUtils.filename(filePath));
@@ -539,11 +669,11 @@ var GroupLinkedFiles = {
 				|| !this.isManagedLibrary(parentItem.libraryID)) {
 			throw this._error("glf-error-not-group");
 		}
-		let base = this.getBasePath();
+		let base = this.getBasePath(parentItem.libraryID);
 		if (!base || !(await IOUtils.exists(base))) {
 			throw this._error("glf-error-no-folder");
 		}
-		if (!this.isInBase(filePath)) {
+		if (!this.isInBase(filePath, parentItem.libraryID)) {
 			throw this._error("glf-error-not-in-folder");
 		}
 		let name = PathUtils.filename(filePath);
@@ -579,13 +709,9 @@ var GroupLinkedFiles = {
 		if (!this._active || !["add", "modify"].includes(event)) {
 			return;
 		}
-		let libraryID = this.getLibraryID();
-		if (!libraryID) {
-			return;
-		}
 		let relevant = ids.some((id) => {
 			let item = Zotero.Items.get(id);
-			return item && item.libraryID == libraryID && item.isAttachment();
+			return item && item.isAttachment() && this.isManagedLibrary(item.libraryID);
 		});
 		if (relevant) {
 			let delay = (parseInt(this.getPref("publishDelaySeconds")) || 0) * 1000;
@@ -609,19 +735,18 @@ var GroupLinkedFiles = {
 	 * Never overwrites: if the name is taken by a different file, the new attachment
 	 * gets a unique name first.
 	 */
-	async publishPending({ force = false } = {}) {
-		if (this._publishing) {
-			return this._publishing;
-		}
-		this._publishing = (async () => {
-			try {
-				return await this._publish(force);
-			}
-			finally {
+	publishPending({ force = false, libraryID = null } = {}) {
+		// Runs one after another, never in parallel
+		let run = (this._publishing || Promise.resolve())
+			.catch(() => {})
+			.then(() => this._publish(force, libraryID));
+		this._publishing = run;
+		run.finally(() => {
+			if (this._publishing === run) {
 				this._publishing = null;
 			}
-		})();
-		return this._publishing;
+		}).catch(() => {});
+		return run;
 	},
 
 	async _getLibraryItems(libraryID) {
@@ -632,13 +757,37 @@ var GroupLinkedFiles = {
 		return Zotero.Items.getAll(libraryID, false, false);
 	},
 
-	async _publish(force) {
+	/** Publish pending files for every linked group (or just one library) */
+	async _publish(force, onlyLibraryID = null) {
+		let result = {
+			published: [], renamed: [], waiting: 0, errors: [], baseMissing: false, missingBases: []
+		};
+		if (!this._active) {
+			return result;
+		}
+		for (let config of this.getActiveConfigs()) {
+			if (onlyLibraryID && config.libraryID != onlyLibraryID) {
+				continue;
+			}
+			let r = await this._publishLibrary(config.libraryID, force);
+			result.published.push(...r.published);
+			result.renamed.push(...r.renamed);
+			result.errors.push(...r.errors);
+			result.waiting += r.waiting;
+			if (r.baseMissing) {
+				result.baseMissing = true;
+				result.missingBases.push(config.basePath);
+			}
+		}
+		return result;
+	},
+
+	async _publishLibrary(libraryID, force) {
 		let result = {
 			published: [], renamed: [], waiting: 0, errors: [], baseMissing: false
 		};
-		let libraryID = this.getLibraryID();
-		let base = this.getBasePath();
-		if (!this._active || !libraryID || !base) {
+		let base = this.getBasePath(libraryID);
+		if (!this._active || !base) {
 			return result;
 		}
 		// If the shared folder isn't there (not synced, drive missing), do nothing
@@ -649,7 +798,7 @@ var GroupLinkedFiles = {
 		let delayMs = force
 			? 0
 			: Math.max(0, (parseInt(this.getPref("publishDelaySeconds")) || 0) * 1000);
-		let naming = this.getNamingSettings();
+		let naming = this.getNamingSettings(libraryID);
 		let attachments = (await this._getLibraryItems(libraryID))
 			.filter(item => this.isManagedItem(item))
 			// Oldest first, so the earlier item gets "Name_1987" and later ones "…a", "…b"
@@ -824,21 +973,26 @@ var GroupLinkedFiles = {
 
 	// ------------------------------------------------------------------ naming
 
-	getNamingSettings() {
-		let str = (name, fallback) => {
-			let v = this.getPref(name);
-			return typeof v == "string" ? v : fallback;
-		};
+	/** Naming settings of a library's group link (defaults if it has none) */
+	getNamingSettings(libraryID) {
+		let config = this.getConfig(libraryID);
+		return this.namingFromConfig(config ? config.naming : {});
+	},
+
+	/** Fill in defaults and fix types */
+	namingFromConfig(naming = {}) {
+		let d = this.DEFAULT_NAMING;
+		let str = (key) => (typeof naming[key] == "string" ? naming[key] : d[key]);
 		return {
-			enabled: this.getPref("naming.enabled") !== false,
-			template: str("naming.template", "").trim() || "{authors}_{year}",
-			authorSeparator: str("naming.authorSeparator", "-"),
-			etAl: str("naming.etAl", "ua"),
-			maxAuthors: Math.max(1, parseInt(this.getPref("naming.maxAuthors")) || 2),
-			noYear: str("naming.noYear", "oJ"),
-			noAuthor: str("naming.noAuthor", "oA"),
-			transliterate: this.getPref("naming.transliterate") !== false,
-			lowercase: this.getPref("naming.lowercase") !== false,
+			enabled: naming.enabled !== false,
+			template: str("template").trim() || d.template,
+			authorSeparator: str("authorSeparator"),
+			etAl: str("etAl"),
+			maxAuthors: Math.max(1, parseInt(naming.maxAuthors) || d.maxAuthors),
+			noYear: str("noYear"),
+			noAuthor: str("noAuthor"),
+			transliterate: naming.transliterate !== false,
+			lowercase: naming.lowercase !== false,
 		};
 	},
 
@@ -922,7 +1076,7 @@ var GroupLinkedFiles = {
 		};
 	},
 
-	getBaseNameForItem(item, settings = this.getNamingSettings()) {
+	getBaseNameForItem(item, settings = this.getNamingSettings(item.libraryID)) {
 		return this.formatBaseName(this.getNameParts(item), settings);
 	},
 
@@ -961,16 +1115,23 @@ var GroupLinkedFiles = {
 	 * scheme name, for items that have no file yet. One file per name: if several items
 	 * share author and year, only the oldest one gets the file; the others are skipped.
 	 */
-	async findMatches({ collectionID = null } = {}) {
-		let libraryID = this.getLibraryID();
-		let base = this.getBasePath();
-		if (!libraryID) {
-			throw this._error("glf-not-configured");
+	async findMatches({ libraryID = null, collectionID = null } = {}) {
+		let collection = null;
+		if (collectionID) {
+			collection = Zotero.Collections.get(collectionID);
+			if (!collection) {
+				throw this._error("glf-error-not-group");
+			}
+			libraryID = collection.libraryID;
 		}
+		if (!libraryID || !this.isManagedLibrary(libraryID)) {
+			throw this._error("glf-error-choose-library");
+		}
+		let base = this.getBasePath(libraryID);
 		if (!base || !(await IOUtils.exists(base))) {
 			throw this._error("glf-error-no-folder");
 		}
-		let settings = this.getNamingSettings();
+		let settings = this.getNamingSettings(libraryID);
 		let all = await this._getLibraryItems(libraryID);
 		let linked = new Set(all
 			.filter(i => i.isAttachment() && i.isFileAttachment())
@@ -999,14 +1160,7 @@ var GroupLinkedFiles = {
 			}
 		}
 
-		let scope = all;
-		if (collectionID) {
-			let collection = Zotero.Collections.get(collectionID);
-			if (!collection || collection.libraryID != libraryID) {
-				throw this._error("glf-error-not-group");
-			}
-			scope = this._collectionItems(collection);
-		}
+		let scope = collection ? this._collectionItems(collection) : all;
 		let candidates = scope
 			.filter(item => item.isRegularItem() && !item.deleted)
 			.filter(item => !Zotero.Items.get(item.getAttachments())
@@ -1036,10 +1190,10 @@ var GroupLinkedFiles = {
 	},
 
 	async linkMatches(matches) {
-		let base = this.getBasePath();
 		let linked = 0;
 		let errors = [];
 		for (let { item, file } of matches) {
+			let base = this.getBasePath(item.libraryID);
 			try {
 				await this.attachSharedFile(item, PathUtils.join(base, file));
 				linked++;
@@ -1069,31 +1223,34 @@ var GroupLinkedFiles = {
 		}
 	},
 
-	async getStatus() {
+	/** Status of one group link: what's found, missing, stuck in Zotero Storage */
+	async getStatus(config) {
+		let libraryID = this.getLibraryIDForConfig(config);
+		let basePath = config ? this.normalizePath(config.basePath) : null;
 		let status = {
 			configured: false,
-			groupID: this.getGroupID(),
-			libraryID: this.getLibraryID(),
+			groupID: config ? config.groupID : 0,
+			libraryID,
 			groupName: null,
-			basePath: this.getBasePath(),
+			basePath,
 			baseExists: false,
 			total: 0,
 			found: 0,
 			missing: [],
 			stranded: [],
 		};
-		if (status.libraryID) {
-			let group = Zotero.Groups.get(this.getGroupID());
+		if (libraryID) {
+			let group = Zotero.Groups.get(config.groupID);
 			status.groupName = group ? group.name : null;
 		}
-		if (status.basePath) {
-			status.baseExists = await IOUtils.exists(status.basePath);
+		if (basePath) {
+			status.baseExists = await IOUtils.exists(basePath);
 		}
-		status.configured = !!(status.libraryID && status.basePath);
+		status.configured = !!(libraryID && basePath);
 		if (!status.configured) {
 			return status;
 		}
-		for (let item of await this._getLibraryItems(status.libraryID)) {
+		for (let item of await this._getLibraryItems(libraryID)) {
 			if (!this.isManagedItem(item)) {
 				continue;
 			}
@@ -1182,7 +1339,7 @@ var GroupLinkedFiles = {
 			let popup = doc.createXULElement("menupopup");
 			menu.append(popup);
 			popup.append(
-				menuitem("glf-tools-link", "glf-menu-link", () => this.cmdLink(win, null)),
+				menuitem("glf-tools-link", "glf-menu-link", () => this.cmdLink(win, { libraryID: this._libraryForTools(win) })),
 				menuitem("glf-tools-check", "glf-menu-check", () => this.cmdCheck(win)),
 				doc.createXULElement("menuseparator"),
 				menuitem("glf-tools-settings", "glf-menu-settings", () => this.openPreferences()),
@@ -1197,7 +1354,10 @@ var GroupLinkedFiles = {
 			sep.id = "glf-collectionmenu-separator";
 			let link = add(collectionMenu, menuitem(
 				"glf-collectionmenu-link", "glf-menu-link-collection",
-				() => this.cmdLink(win, this._selectedCollectionID(win))
+				() => this.cmdLink(win, {
+					collectionID: this._selectedCollectionID(win),
+					libraryID: win.ZoteroPane.getSelectedLibraryID(),
+				})
 			));
 			let onShowing = (event) => {
 				if (event.target !== collectionMenu) {
@@ -1259,7 +1419,7 @@ var GroupLinkedFiles = {
 			return;
 		}
 		let parent = win.ZoteroPane.getSelectedItems()[0];
-		let base = this.getBasePath();
+		let base = this.getBasePath(parent.libraryID);
 		if (!base || !(await IOUtils.exists(base))) {
 			this._alert(win, this.l10n("glf-error-no-folder"));
 			return;
@@ -1309,20 +1469,47 @@ var GroupLinkedFiles = {
 	},
 
 	/** Human-readable summary lines for the check command and the settings pane */
-	async describeStatus({ publish = false } = {}) {
-		let lines = [];
-		let published = null;
-		if (publish) {
-			published = await this.publishPending({ force: true });
+	/**
+	 * Human-readable status lines for the check command and the settings pane:
+	 * all group links, or just one (configID).
+	 */
+	async describeStatus({ publish = false, configID = null } = {}) {
+		let configs = configID
+			? [this.getConfigByID(configID)].filter(Boolean)
+			: this.getConfigs();
+		if (!configs.length) {
+			return { statuses: [], lines: [this.l10n("glf-not-configured")] };
 		}
-		let s = await this.getStatus();
-		if (!s.groupID || !s.basePath) {
-			return { status: s, lines: [this.l10n("glf-not-configured")] };
+		let lines = [];
+		let statuses = [];
+		for (let config of configs) {
+			if (lines.length) {
+				lines.push("", "────────", "");
+			}
+			let libraryID = this.getLibraryIDForConfig(config);
+			let published = null;
+			if (publish && libraryID) {
+				published = await this.publishPending({ force: true, libraryID });
+			}
+			let s = await this.getStatus(config);
+			statuses.push(s);
+			lines.push(...this._statusLines(s, published));
+		}
+		return { statuses, status: statuses[0], lines };
+	},
+
+	_statusLines(s, published) {
+		if (!s.groupID) {
+			return [this.l10n("glf-config-no-group")];
 		}
 		if (!s.libraryID) {
-			return { status: s, lines: [this.l10n("glf-group-not-found", { id: s.groupID })] };
+			return [this.l10n("glf-group-not-found", { id: s.groupID })];
 		}
-		lines.push(this.l10n("glf-check-group", { name: s.groupName || String(s.groupID) }));
+		let lines = [this.l10n("glf-check-group", { name: s.groupName || String(s.groupID) })];
+		if (!s.basePath) {
+			lines.push(this.l10n("glf-check-no-folder"));
+			return lines;
+		}
 		lines.push(s.baseExists
 			? this.l10n("glf-check-folder", { path: s.basePath })
 			: this.l10n("glf-check-folder-missing", { path: s.basePath }));
@@ -1360,7 +1547,20 @@ var GroupLinkedFiles = {
 				lines.push(this.l10n("glf-check-more", { count: missing.length - shown.length }));
 			}
 		}
-		return { status: s, lines };
+		return lines;
+	},
+
+	/** Library for "Link Matching Files" from the Tools menu */
+	_libraryForTools(win) {
+		try {
+			let selected = win.ZoteroPane.getSelectedLibraryID();
+			if (this.isManagedLibrary(selected)) {
+				return selected;
+			}
+		}
+		catch (e) {}
+		let active = this.getActiveConfigs();
+		return active.length == 1 ? active[0].libraryID : null;
 	},
 
 	_selectedCollectionID(win) {
@@ -1379,10 +1579,10 @@ var GroupLinkedFiles = {
 	},
 
 	/** "Link Matching Files…": preview, confirm, link */
-	async cmdLink(win, collectionID) {
+	async cmdLink(win, { libraryID = null, collectionID = null } = {}) {
 		let found;
 		try {
-			found = await this.findMatches({ collectionID });
+			found = await this.findMatches({ libraryID, collectionID });
 		}
 		catch (e) {
 			if (e.l10nId) {
@@ -1437,9 +1637,9 @@ var GroupLinkedFiles = {
 			`Plugin version: ${this.version}`,
 			`Zotero version: ${Zotero.version}`,
 			`Platform: ${Zotero.platform || Services.appinfo.OS}`,
-			`Group configured: ${this.getGroupID() ? "yes" : "no"}`,
-			`Group found locally: ${this.getLibraryID() ? "yes" : "no"}`,
-			`Shared folder set: ${this.getBasePath() ? "yes" : "no"}`,
+			`Group links: ${this.getConfigs().length}`,
+			`Groups found locally: ${this.getActiveConfigs().length}`,
+			`Shared folders set: ${this.getConfigs().filter(c => this.normalizePath(c.basePath)).length}`,
 		].join("\n");
 		let title = "Problem: ";
 		let body = "What happened?\n\n\nWhat did you expect?\n\n\n---\n" + info;

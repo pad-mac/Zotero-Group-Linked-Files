@@ -100,10 +100,25 @@ async function run(dir, results, report) {
 	group.archived = false;
 	await group.saveTx();
 	let libraryID = group.libraryID;
-	glf.setPref("groupID", 4711);
-	glf.setPref("basePath", base);
-	// The basic checks use plain filenames; the naming scheme is tested further down
-	glf.setPref("naming.enabled", false);
+	let cfg;
+
+	// run.sh starts Zotero with the old (0.2) single-group prefs; the plugin must have
+	// turned them into the first group link. naming.enabled=false keeps plain filenames
+	// for the basic checks; the naming scheme is tested further down.
+	await check("old single-group settings are migrated", async () => {
+		let configs = glf.getConfigs();
+		assert(configs.length == 1, "configs: " + JSON.stringify(configs));
+		cfg = configs[0];
+		assert(cfg.groupID == 4711, "groupID " + cfg.groupID);
+		assert(cfg.basePath == base, "basePath " + cfg.basePath);
+		assert(cfg.naming.enabled === false, "naming.enabled not migrated");
+		assert(Zotero.Prefs.get("extensions.group-linked-files.groupID", true) === undefined,
+			"old pref left behind");
+		return cfg;
+	});
+	if (!cfg) {
+		cfg = glf.addConfig({ groupID: 4711, basePath: base, naming: { enabled: false } });
+	}
 
 	let createItem = async (authors, year, { editors = [] } = {}) => {
 		let item = new Zotero.Item("book");
@@ -268,7 +283,7 @@ async function run(dir, results, report) {
 	});
 
 	await check("new files get the naming scheme: name_jahr, a/b, a-ua, ü→ue, lowercase, editors", async () => {
-		glf.setPref("naming.enabled", true);
+		glf.updateConfig(cfg.id, { naming: { enabled: true } });
 		let m1 = await createItem(["Müller"], "1987");
 		let m2 = await createItem(["Müller"], "1987");
 		let w = await createItem(["Weber", "Braun", "Klein"], "2004");
@@ -327,7 +342,7 @@ async function run(dir, results, report) {
 		assert(inColl.matches.length == 1 && inColl.matches[0].file == "Braun-Klein_2001.pdf",
 			"collection scope: " + JSON.stringify(inColl.matches.map(m => m.file)));
 
-		let r = await glf.findMatches();
+		let r = await glf.findMatches({ libraryID });
 		let got = Object.fromEntries(r.matches.map(m => [m.item.id, m.file]));
 		assert(got[b1.id] == "Braun_1999.pdf", "b1 " + got[b1.id]);
 		assert(got[bk.id] == "Braun-Klein_2001.pdf", "bk " + got[bk.id]);
@@ -356,7 +371,7 @@ async function run(dir, results, report) {
 			key: st.key, version: 7, itemType: "attachment",
 			md5: "0123456789abcdef0123456789abcdef", filename: "Ohne-Plugin_2020.pdf",
 		});
-		let s = await glf.getStatus();
+		let s = await glf.getStatus(glf.getConfigByID(cfg.id));
 		assert(s.stranded.includes("Ohne-Plugin_2020.pdf"), "stranded " + JSON.stringify(s.stranded));
 		let { lines } = await glf.describeStatus();
 		return lines;
@@ -369,6 +384,63 @@ async function run(dir, results, report) {
 		assert(!Zotero.Items.get(att.id), "item not erased");
 		assert(await IOUtils.exists(sharedPDF), "shared file deleted");
 		assert(await md5(sharedPDF) == sharedMD5, "shared file changed");
+	});
+
+	let base2 = PathUtils.join(dir, "Projekt-2");
+	let cfg2;
+	let lib2;
+	let shared2;
+	await check("second group: own folder, own naming, own file-sync switch", async () => {
+		await IOUtils.makeDirectory(base2, { ignoreExisting: true });
+		let group2 = new Zotero.Group();
+		group2.id = 815;
+		group2.name = "Zweites Projekt";
+		group2.description = "";
+		group2.editable = true;
+		group2.filesEditable = true;
+		group2.version = 1;
+		group2.archived = false;
+		await group2.saveTx();
+		lib2 = group2.libraryID;
+		cfg2 = glf.addConfig({
+			groupID: 815,
+			basePath: base2,
+			naming: { template: "{year}_{authors}", lowercase: false },
+		});
+
+		let L = Zotero.Sync.Storage.Local;
+		assert(L.getEnabledForLibrary(libraryID) === false, "group 1 file sync on");
+		assert(L.getEnabledForLibrary(lib2) === false, "group 2 file sync on");
+
+		// A file already in group 2's folder resolves there, not in group 1's
+		shared2 = PathUtils.join(base2, "Mueller - 1987 - Magnetschwebebahn.pdf");
+		await IOUtils.copy(sharedPDF, shared2);
+		let p0 = new Zotero.Item("book");
+		p0.libraryID = lib2;
+		p0.setField("title", "Zweites Projekt Buch");
+		await p0.saveTx();
+		let att2 = await glf.attachSharedFile(p0, shared2);
+		assert(await att2.getFilePathAsync() == shared2, "group 2 resolved to " + await att2.getFilePathAsync());
+
+		// New files get group 2's scheme and land in group 2's folder
+		let p2 = new Zotero.Item("book");
+		p2.libraryID = lib2;
+		p2.setField("title", "Weber u. a.");
+		p2.setField("date", "2004");
+		p2.setCreators(["Weber", "Braun", "Klein"].map(lastName => ({ firstName: "A.", lastName, creatorType: "author" })));
+		await p2.saveTx();
+		let imported2 = await Zotero.Attachments.importFromFile({
+			file: PathUtils.join(fixtures, "scan_0042.pdf"),
+			parentItemID: p2.id,
+		});
+		await glf.publishPending({ force: true });
+		assert(imported2.attachmentFilename == "2004_Weber-ua.pdf", "name " + imported2.attachmentFilename);
+		assert(await IOUtils.exists(PathUtils.join(base2, "2004_Weber-ua.pdf")), "not in folder 2");
+		assert(!(await IOUtils.exists(PathUtils.join(base, "2004_Weber-ua.pdf"))), "landed in folder 1");
+
+		let { lines, statuses } = await glf.describeStatus();
+		assert(statuses.length == 2, "status for " + statuses.length + " links");
+		return lines;
 	});
 
 	await check("menus are in the main window", async () => {
@@ -398,10 +470,33 @@ async function run(dir, results, report) {
 			let el = doc.getElementById("glf-status");
 			return el && el.textContent.trim() && el;
 		}, 15000, "status text");
+		let configs = doc.getElementById("glf-config");
+		let entries = [...doc.getElementById("glf-config-popup").children].map(e => e.getAttribute("label"));
+		assert(entries.length == 2, "link list: " + JSON.stringify(entries));
+		assert(configs.value == cfg.id, "first link not selected");
 		let menulist = doc.getElementById("glf-group");
 		assert(menulist.value == "4711", "group menulist value " + menulist.value);
 		assert(doc.getElementById("glf-base").value == base, "base path not shown");
-		win.resizeTo(900, 1000);
+
+		// Switch to the second link: the form shows its group, folder and naming
+		configs.value = cfg2.id;
+		configs.dispatchEvent(new win.Event("command"));
+		await waitFor(() => doc.getElementById("glf-base").value == base2, 5000, "second link shown");
+		assert(menulist.value == "815", "second group value " + menulist.value);
+		assert(doc.getElementById("glf-naming-template").value == "{year}_{authors}", "template");
+		assert(doc.getElementById("glf-naming-lowercase").checked === false, "lowercase");
+		let preview2 = doc.getElementById("glf-naming-preview").textContent;
+		assert(preview2.includes("2004_Weber-ua.pdf"), "preview 2: " + preview2);
+		// The first group isn't offered again for the second link
+		let offered = [...doc.getElementById("glf-group-popup").children].map(e => e.getAttribute("value"));
+		assert(!offered.includes("4711"), "group 1 offered twice");
+
+		configs.value = cfg.id;
+		configs.dispatchEvent(new win.Event("command"));
+		await waitFor(() => doc.getElementById("glf-base").value == base, 5000, "first link shown");
+		await waitFor(() => doc.getElementById("glf-status").textContent.includes("Transrapid"),
+			10000, "status of first link");
+		win.resizeTo(900, 1080);
 		await Zotero.Promise.delay(1000);
 		let shot = Services.prefs.getStringPref("glf-harness.screenshot", "");
 		if (shot) {
@@ -417,14 +512,26 @@ async function run(dir, results, report) {
 			"weber-ua_2004.pdf"]) {
 			assert(preview.includes(n), "preview lacks " + n + ": " + preview);
 		}
-		let text = status.textContent;
+		let text = doc.getElementById("glf-status").textContent;
 		win.close();
-		return { status: text, preview };
+		return { links: entries, status: text, preview };
 	});
 
 	await check("status summary", async () => {
 		let { lines } = await glf.describeStatus();
 		return lines;
+	});
+
+	await check("removing a link hands the group back to Zotero", async () => {
+		glf.removeConfig(cfg2.id);
+		let L = Zotero.Sync.Storage.Local;
+		assert(L.getEnabledForLibrary(lib2) === !!Zotero.Prefs.get("sync.storage.groups.enabled"),
+			"group 2 file sync still switched off");
+		assert(L.getEnabledForLibrary(libraryID) === false, "group 1 affected");
+		let items = await Zotero.Items.getAll(lib2);
+		let att = items.find(i => i.isAttachment() && i.attachmentFilename == PathUtils.filename(shared2));
+		assert(!(await att.getFilePathAsync()), "group 2 file still redirected");
+		assert(await IOUtils.exists(shared2), "file in folder 2 touched");
 	});
 
 	// Keep last: disables the plugin

@@ -1,12 +1,13 @@
 // Default preferences. Zotero loads this file automatically for plugins.
 
-// Zotero group ID (as in zotero.org/groups/<ID>) whose files live in the shared folder.
-// 0 = not configured.
-pref("extensions.group-linked-files.groupID", 0);
-
-// Absolute path of the shared folder on this computer (e.g. the synced HU-Box library).
-// Set per computer in the plugin's settings pane.
-pref("extensions.group-linked-files.basePath", "");
+// Group links, set in the plugin's settings pane (per computer): a JSON list of
+//   { id, groupID, basePath, naming: { enabled, template, authorSeparator, etAl,
+//     maxAuthors, noYear, noAuthor, transliterate, lowercase } }
+// groupID is the Zotero group ID (zotero.org/groups/<ID>); basePath is the shared
+// folder on this computer. Default naming: {authors}_{year}, umlauts replaced,
+// lowercase -> mueller_1987, mueller-schmidt_1990, weber-ua_2004; taken names get
+// a, b, ...
+pref("extensions.group-linked-files.groups", "[]");
 
 // Seconds an attachment must stay unchanged before it is copied to the shared folder.
 // Gives Zotero time to rename new files from parent metadata first.
@@ -16,18 +17,3 @@ pref("extensions.group-linked-files.publishDelaySeconds", 60);
 // otherwise a prefilled GitHub issue.
 pref("extensions.group-linked-files.reportEmail", "");
 pref("extensions.group-linked-files.reportURL", "https://github.com/pad-mac/Zotero-Group-Linked-Files/issues/new");
-
-// File naming for new files copied into the shared folder, and for
-// "Link Matching Files". Placeholders: {authors}, {year}, {title}.
-// 1 author: mueller_1987, 2 authors: mueller-schmidt_1990, more: weber-ua_2004.
-// Same name already taken: mueller_1987a, mueller_1987b, ...
-// transliterate: umlauts to ae/oe/ue/ss, other accents dropped; lowercase: all lowercase.
-pref("extensions.group-linked-files.naming.enabled", true);
-pref("extensions.group-linked-files.naming.template", "{authors}_{year}");
-pref("extensions.group-linked-files.naming.authorSeparator", "-");
-pref("extensions.group-linked-files.naming.etAl", "ua");
-pref("extensions.group-linked-files.naming.maxAuthors", 2);
-pref("extensions.group-linked-files.naming.noYear", "oJ");
-pref("extensions.group-linked-files.naming.noAuthor", "oA");
-pref("extensions.group-linked-files.naming.transliterate", true);
-pref("extensions.group-linked-files.naming.lowercase", true);

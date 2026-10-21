@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Group Linked Files",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Keep a Zotero group's PDFs in a shared folder (e.g. HU-Box/Seafile) instead of Zotero Storage, and still open and annotate them in Zotero's reader.",
   "homepage_url": "https://github.com/pad-mac/Zotero-Group-Linked-Files",
   "author": "pad-mac",

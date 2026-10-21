@@ -17,8 +17,16 @@ export function makeEnv({ groupID = 4711, libraryID = 2, userLibraryID = 1 } = {
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "glf-"));
 	const storage = path.join(tmp, "storage");
 	const base = path.join(tmp, "HU-Box");
+	const base2 = path.join(tmp, "Projekt-2");
 	fs.mkdirSync(storage);
 	fs.mkdirSync(base);
+	fs.mkdirSync(base2);
+	// groupID -> local library; 815 is a second group, 999 a group without a link
+	const groups = {
+		[groupID]: { libraryID, name: "Testgruppe" },
+		815: { libraryID: 3, name: "Zweite Gruppe" },
+		999: { libraryID: 4, name: "Ohne Verknüpfung" },
+	};
 
 	const prefs = new Map();
 	const items = new Map();
@@ -137,10 +145,11 @@ export function makeEnv({ groupID = 4711, libraryID = 2, userLibraryID = 1 } = {
 		Prefs: {
 			get: k => prefs.get(k),
 			set: (k, v) => prefs.set(k, v),
+			clear: k => prefs.delete(k),
 		},
 		Groups: {
-			getLibraryIDFromGroupID: id => (id == groupID ? libraryID : false),
-			get: id => (id == groupID ? { name: "Testgruppe" } : null),
+			getLibraryIDFromGroupID: id => (groups[id] ? groups[id].libraryID : false),
+			get: id => groups[id] || null,
 		},
 		Libraries: { userLibraryID, get: () => ({ waitForDataLoad: async () => {} }) },
 		Items: {
@@ -199,15 +208,9 @@ export function makeEnv({ groupID = 4711, libraryID = 2, userLibraryID = 1 } = {
 	glf._active = true;
 	glf.installPatches();
 
-	prefs.set("extensions.group-linked-files.groupID", groupID);
-	prefs.set("extensions.group-linked-files.basePath", base);
 	prefs.set("extensions.group-linked-files.publishDelaySeconds", 0);
-	for (const line of fs.readFileSync(path.join(path.dirname(SRC), "../prefs.js"), "utf8").split("\n")) {
-		const m = line.match(/^pref\("([^"]+)",\s*(.+)\);/);
-		if (m && m[1].includes(".naming.")) {
-			prefs.set(m[1], JSON.parse(m[2]));
-		}
-	}
+	glf.setConfigs([{ id: "g1", groupID, basePath: base }]);
+	const setConfig = patch => glf.updateConfig("g1", patch);
 
 	function addAttachment(name, { lib = libraryID, local = null, shared = null, parent = null } = {}) {
 		const item = new Item("attachment");
@@ -245,7 +248,7 @@ export function makeEnv({ groupID = 4711, libraryID = 2, userLibraryID = 1 } = {
 
 	return {
 		glf, Zotero, Item, Local, Fulltext, PDFWorker, calls, prefs, items, syncCache,
-		tmp, storage, base, groupID, libraryID, userLibraryID,
+		tmp, storage, base, base2, groupID, libraryID, userLibraryID, setConfig,
 		addAttachment, addParent, listBase, readBase,
 		cleanup: () => fs.rmSync(tmp, { recursive: true, force: true }),
 	};

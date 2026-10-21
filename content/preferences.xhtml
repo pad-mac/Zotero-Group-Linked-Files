@@ -5,43 +5,58 @@
 	<groupbox>
 		<html:p class="glf-intro" data-l10n-id="glf-prefs-intro"/>
 
-		<label class="glf-label" data-l10n-id="glf-prefs-group" control="glf-group"/>
-		<menulist id="glf-group" native="true">
-			<menupopup id="glf-group-popup"/>
-		</menulist>
-
-		<label class="glf-label" data-l10n-id="glf-prefs-folder"/>
-		<hbox align="center" class="glf-folder-row">
-			<html:input type="text" id="glf-base" readonly="true"/>
-			<button id="glf-choose" data-l10n-id="glf-prefs-choose"/>
+		<label class="glf-label" data-l10n-id="glf-prefs-links" control="glf-config"/>
+		<hbox align="center" class="glf-config-row">
+			<menulist id="glf-config" native="true">
+				<menupopup id="glf-config-popup"/>
+			</menulist>
+			<button id="glf-add" data-l10n-id="glf-prefs-add"/>
+			<button id="glf-remove" data-l10n-id="glf-prefs-remove"/>
 		</hbox>
+		<html:p id="glf-empty" class="glf-help" data-l10n-id="glf-prefs-empty"/>
 	</groupbox>
 
-	<groupbox>
-		<label><html:h2 data-l10n-id="glf-prefs-naming-title"/></label>
-		<checkbox id="glf-naming-enabled" data-l10n-id="glf-prefs-naming-enabled"/>
-		<html:p id="glf-naming-help" class="glf-help" data-l10n-id="glf-prefs-naming-help"/>
-		<html:div class="glf-naming-grid">
-			<html:label for="glf-naming-template" data-l10n-id="glf-prefs-naming-template"/>
-			<html:input type="text" id="glf-naming-template" spellcheck="false"/>
-			<html:label for="glf-naming-separator" data-l10n-id="glf-prefs-naming-separator"/>
-			<html:input type="text" id="glf-naming-separator" class="glf-short" spellcheck="false"/>
-			<html:label for="glf-naming-etal" data-l10n-id="glf-prefs-naming-etal"/>
-			<html:input type="text" id="glf-naming-etal" class="glf-short" spellcheck="false"/>
-			<html:label for="glf-naming-max" data-l10n-id="glf-prefs-naming-max"/>
-			<html:input type="number" id="glf-naming-max" class="glf-short" min="1" max="10"/>
-		</html:div>
-		<checkbox id="glf-naming-transliterate" data-l10n-id="glf-prefs-naming-transliterate"/>
-		<checkbox id="glf-naming-lowercase" data-l10n-id="glf-prefs-naming-lowercase"/>
-		<label class="glf-label" data-l10n-id="glf-prefs-naming-preview"/>
-		<html:pre id="glf-naming-preview" class="glf-preview"></html:pre>
-	</groupbox>
+	<vbox id="glf-detail">
+		<groupbox>
+			<label class="glf-label" data-l10n-id="glf-prefs-group" control="glf-group"/>
+			<menulist id="glf-group" native="true">
+				<menupopup id="glf-group-popup"/>
+			</menulist>
 
-	<groupbox>
-		<label><html:h2 data-l10n-id="glf-prefs-status-title"/></label>
-		<html:pre id="glf-status" class="glf-status"></html:pre>
-		<hbox>
-			<button id="glf-check" data-l10n-id="glf-prefs-check"/>
-		</hbox>
-	</groupbox>
+			<label class="glf-label" data-l10n-id="glf-prefs-folder"/>
+			<hbox align="center" class="glf-folder-row">
+				<html:input type="text" id="glf-base" readonly="true"/>
+				<button id="glf-choose" data-l10n-id="glf-prefs-choose"/>
+			</hbox>
+			<html:p id="glf-same-folder" class="glf-help" data-l10n-id="glf-prefs-same-folder"/>
+		</groupbox>
+
+		<groupbox>
+			<label><html:h2 data-l10n-id="glf-prefs-naming-title"/></label>
+			<checkbox id="glf-naming-enabled" data-l10n-id="glf-prefs-naming-enabled"/>
+			<html:p id="glf-naming-help" class="glf-help" data-l10n-id="glf-prefs-naming-help"/>
+			<html:div class="glf-naming-grid">
+				<html:label for="glf-naming-template" data-l10n-id="glf-prefs-naming-template"/>
+				<html:input type="text" id="glf-naming-template" spellcheck="false"/>
+				<html:label for="glf-naming-separator" data-l10n-id="glf-prefs-naming-separator"/>
+				<html:input type="text" id="glf-naming-separator" class="glf-short" spellcheck="false"/>
+				<html:label for="glf-naming-etal" data-l10n-id="glf-prefs-naming-etal"/>
+				<html:input type="text" id="glf-naming-etal" class="glf-short" spellcheck="false"/>
+				<html:label for="glf-naming-max" data-l10n-id="glf-prefs-naming-max"/>
+				<html:input type="number" id="glf-naming-max" class="glf-short" min="1" max="10"/>
+			</html:div>
+			<checkbox id="glf-naming-transliterate" data-l10n-id="glf-prefs-naming-transliterate"/>
+			<checkbox id="glf-naming-lowercase" data-l10n-id="glf-prefs-naming-lowercase"/>
+			<label class="glf-label" data-l10n-id="glf-prefs-naming-preview"/>
+			<html:pre id="glf-naming-preview" class="glf-preview"></html:pre>
+		</groupbox>
+
+		<groupbox>
+			<label><html:h2 data-l10n-id="glf-prefs-status-title"/></label>
+			<html:pre id="glf-status" class="glf-status"></html:pre>
+			<hbox>
+				<button id="glf-check" data-l10n-id="glf-prefs-check"/>
+			</hbox>
+		</groupbox>
+	</vbox>
 </vbox>

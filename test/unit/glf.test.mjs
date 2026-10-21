@@ -41,7 +41,7 @@ describe("path redirect", () => {
 	test("no redirect without a shared folder set", async () => {
 		env = makeEnv();
 		const item = env.addAttachment("a.pdf", { shared: "S" });
-		env.prefs.set("extensions.group-linked-files.basePath", "");
+		env.setConfig({ basePath: "" });
 		assert.equal(await item.getFilePathAsync(), false);
 	});
 
@@ -120,7 +120,7 @@ describe("file sync switch", () => {
 
 	test("stays off even if this computer has no shared folder set", () => {
 		env = makeEnv();
-		env.prefs.set("extensions.group-linked-files.basePath", "");
+		env.setConfig({ basePath: "" });
 		assert.equal(env.Local.getEnabledForLibrary(env.libraryID), false);
 	});
 });
@@ -178,7 +178,7 @@ describe("publishing new files", () => {
 	test("does nothing when the shared folder is missing", async () => {
 		env = makeEnv();
 		env.addAttachment("x.pdf", { local: "X" });
-		env.prefs.set("extensions.group-linked-files.basePath", path.join(env.tmp, "nope"));
+		env.setConfig({ basePath: path.join(env.tmp, "nope") });
 		const r = await env.glf.publishPending();
 		assert.equal(r.baseMissing, true);
 		assert.ok(!fs.existsSync(path.join(env.tmp, "nope")));
@@ -259,7 +259,7 @@ describe("umlauts in filenames", () => {
 describe("naming scheme", () => {
 	const fmt = (lastNames, year, extra = {}) => {
 		env = env || makeEnv();
-		const s = { ...env.glf.getNamingSettings(), ...extra };
+		const s = { ...env.glf.getNamingSettings(env.libraryID), ...extra };
 		return env.glf.formatBaseName({ lastNames, year, title: "Ein Titel über Magnetbahnen" }, s);
 	};
 
@@ -357,7 +357,7 @@ describe("new files get the scheme name", () => {
 
 	test("can be switched off", async () => {
 		env = makeEnv();
-		env.prefs.set("extensions.group-linked-files.naming.enabled", false);
+		env.setConfig({ naming: { enabled: false } });
 		const p = env.addParent({ authors: ["Müller"], year: "1987" });
 		const a = env.addAttachment("Original Name.pdf", { local: "X", parent: p });
 		await env.glf.publishPending();
@@ -379,7 +379,7 @@ describe("link matching files", () => {
 		const w = env.addParent({ authors: ["Weber", "Braun", "Klein"], year: "2004" });
 		const k = env.addParent({ authors: ["König"], year: "1975" });
 		const none = env.addParent({ authors: ["Niemand"], year: "1950" });
-		const r = await env.glf.findMatches();
+		const r = await env.glf.findMatches({ libraryID: env.libraryID });
 		const got = Object.fromEntries(r.matches.map(m => [m.item.id, m.file]));
 		assert.deepEqual(got, {
 			[m1.id]: "Müller_1987.pdf",
@@ -404,7 +404,7 @@ describe("link matching files", () => {
 		const p = env.addParent({ authors: ["Müller"], year: "1987" });
 		env.addAttachment("Müller_1987.pdf", { parent: p });
 		const other = env.addParent({ authors: ["Müller"], year: "1987" });
-		const r = await env.glf.findMatches();
+		const r = await env.glf.findMatches({ libraryID: env.libraryID });
 		assert.equal(r.matches.length, 0);
 		same(r.unmatched.map(i => i.id), [other.id]);
 	});
@@ -418,10 +418,116 @@ describe("stranded files", () => {
 		env.syncCache.set(stranded.key, { key: stranded.key, version: 12, data: { md5: "abc" } });
 		env.addAttachment("einfach-weg.pdf");
 		env.addAttachment("ok.pdf", { shared: "x" });
-		const s = await env.glf.getStatus();
+		const s = await env.glf.getStatus(env.glf.getConfigByID("g1"));
 		assert.equal(s.total, 3);
 		assert.equal(s.found, 1);
 		same(s.missing.sort(), ["einfach-weg.pdf", "ohne-plugin.pdf"]);
 		same(s.stranded, ["ohne-plugin.pdf"]);
+	});
+});
+
+describe("several group links", () => {
+	const LIB2 = 3;
+	const addSecond = (naming = {}) => env.glf.addConfig({
+		id: "g2", groupID: 815, basePath: env.base2, naming,
+	});
+
+	test("each group resolves to its own folder", async () => {
+		env = makeEnv();
+		addSecond();
+		const a = env.addAttachment("same.pdf");
+		const b = env.addAttachment("same.pdf", { lib: LIB2 });
+		fs.writeFileSync(path.join(env.base, "same.pdf"), "ONE");
+		fs.writeFileSync(path.join(env.base2, "same.pdf"), "TWO");
+		assert.equal(await a.getFilePathAsync(), path.join(env.base, "same.pdf"));
+		assert.equal(await b.getFilePathAsync(), path.join(env.base2, "same.pdf"));
+	});
+
+	test("file sync is off for every linked group, on for the rest", () => {
+		env = makeEnv();
+		addSecond();
+		assert.equal(env.Local.getEnabledForLibrary(env.libraryID), false);
+		assert.equal(env.Local.getEnabledForLibrary(LIB2), false);
+		assert.equal(env.Local.getEnabledForLibrary(4), true);
+		assert.equal(env.Local.getEnabledForLibrary(env.userLibraryID), true);
+	});
+
+	test("new files are named and copied per group", async () => {
+		env = makeEnv();
+		addSecond({ template: "{year}_{authors}", lowercase: false, etAl: "et al" });
+		const p1 = env.addParent({ authors: ["Weber", "Braun", "Klein"], year: "2004" });
+		const p2 = env.addParent({ lib: LIB2, authors: ["Weber", "Braun", "Klein"], year: "2004" });
+		const a1 = env.addAttachment("x.pdf", { local: "1", parent: p1 });
+		const a2 = env.addAttachment("y.pdf", { lib: LIB2, local: "2", parent: p2 });
+		await env.glf.publishPending();
+		assert.equal(a1.attachmentFilename, "weber-ua_2004.pdf");
+		assert.equal(a2.attachmentFilename, "2004_Weber-et al.pdf");
+		assert.deepEqual(env.listBase(), ["weber-ua_2004.pdf"]);
+		assert.deepEqual(fs.readdirSync(env.base2), ["2004_Weber-et al.pdf"]);
+	});
+
+	test("link matching uses the group's folder and naming", async () => {
+		env = makeEnv();
+		addSecond({ template: "{authors} {year}", transliterate: false, lowercase: false });
+		fs.writeFileSync(path.join(env.base2, "Müller 1987.pdf"), "x");
+		fs.writeFileSync(path.join(env.base, "mueller_1987.pdf"), "y");
+		const p1 = env.addParent({ authors: ["Müller"], year: "1987" });
+		const p2 = env.addParent({ lib: LIB2, authors: ["Müller"], year: "1987" });
+		const r1 = await env.glf.findMatches({ libraryID: env.libraryID });
+		const r2 = await env.glf.findMatches({ libraryID: LIB2 });
+		same(r1.matches.map(m => [m.item.id, m.file]), [[p1.id, "mueller_1987.pdf"]]);
+		same(r2.matches.map(m => [m.item.id, m.file]), [[p2.id, "Müller 1987.pdf"]]);
+		await env.glf.linkMatches(r2.matches);
+		const att = env.Zotero.Items.get(p2.getAttachments())[0];
+		assert.equal(await att.getFilePathAsync(), path.join(env.base2, "Müller 1987.pdf"));
+	});
+
+	test("removing a link gives the group back to Zotero", async () => {
+		env = makeEnv();
+		addSecond();
+		const b = env.addAttachment("z.pdf", { lib: LIB2 });
+		fs.writeFileSync(path.join(env.base2, "z.pdf"), "x");
+		env.glf.removeConfig("g2");
+		assert.equal(env.Local.getEnabledForLibrary(LIB2), true);
+		assert.equal(await b.getFilePathAsync(), false);
+		assert.equal(env.Local.getEnabledForLibrary(env.libraryID), false);
+	});
+
+	test("status covers every link", async () => {
+		env = makeEnv();
+		addSecond();
+		env.glf.addConfig({ id: "g3" });
+		const { lines, statuses } = await env.glf.describeStatus();
+		assert.equal(statuses.length, 3);
+		assert.ok(lines.includes("glf-config-no-group"));
+	});
+});
+
+describe("settings storage", () => {
+	test("migrates the old single-group settings", () => {
+		env = makeEnv();
+		env.glf.setConfigs([]);
+		const P = "extensions.group-linked-files.";
+		env.prefs.set(P + "groupID", 4711);
+		env.prefs.set(P + "basePath", "/old/HU-Box");
+		env.prefs.set(P + "naming.template", "{authors} ({year})");
+		env.prefs.set(P + "naming.lowercase", false);
+		assert.equal(env.glf.migrateLegacyPrefs(), true);
+		const [c] = env.glf.getConfigs();
+		assert.equal(c.groupID, 4711);
+		assert.equal(c.basePath, "/old/HU-Box");
+		assert.equal(c.naming.template, "{authors} ({year})");
+		assert.equal(c.naming.lowercase, false);
+		assert.equal(c.naming.transliterate, true);
+		assert.equal(env.prefs.has(P + "groupID"), false);
+		assert.equal(env.glf.migrateLegacyPrefs(), false);
+	});
+
+	test("broken stored settings don't break Zotero", async () => {
+		env = makeEnv();
+		env.prefs.set("extensions.group-linked-files.groups", "{not json");
+		same(env.glf.getConfigs(), []);
+		const a = env.addAttachment("a.pdf", { shared: "x" });
+		assert.equal(await a.getFilePathAsync(), false);
 	});
 });
