@@ -4,15 +4,17 @@ Unsere PDFs liegen im gemeinsamen HU-Box-Ordner. Mit dem Plugin öffnen sie sich
 
 ## Einmal einrichten (pro Computer)
 
-1. **HU-Box-Ordner synchronisieren**: Der gemeinsame Ordner muss mit dem Seafile-Client auf deinem Computer synchronisiert sein.
+1. **Zugang zum HU-Box-Ordner** – eine der beiden Varianten:
+   - **Mit HU-Box-Client:** Der gemeinsame Ordner wird mit dem Seafile-Client auf deinem Computer synchronisiert.
+   - **Ohne Client (WebDAV):** In der HU-Box-Weboberfläche unter Einstellungen → WebDAV einmalig ein **WebDAV-Passwort** festlegen. Dort steht auch dein WebDAV-Benutzername.
 2. **Plugin installieren**: Die Datei `group-linked-files-….xpi` aus dem [neuesten Release](https://github.com/pad-mac/Zotero-Group-Linked-Files/releases/latest) herunterladen. In Zotero: **Werkzeuge → Plugins → Zahnrad ⚙ → „Add-on aus Datei installieren…“** und die Datei wählen.
-3. **Einstellen**: Zotero-Einstellungen → **Group Linked Files** → **Gruppe hinzufügen…** → Gruppe wählen → gemeinsamen Ordner wählen. Unter „Status“ sollte stehen, wie viele Dateien gefunden wurden. Für weitere Gruppen mit eigenem Ordner einfach noch eine Gruppe hinzufügen – Ordner und Dateibenennung gelten jeweils nur für diese Gruppe.
+3. **Einstellen**: Zotero-Einstellungen → **Group Linked Files** → **Gruppe hinzufügen…** → Gruppe wählen → unter „Wo die Dateien liegen“ entweder den lokalen Ordner wählen oder **WebDAV**: Adresse `https://box.hu-berlin.de/huboxdav/`, Ordner über **Durchsuchen…** wählen, Benutzername und WebDAV-Passwort eintragen → **Speichern & testen**. Unter „Status“ sollte stehen, wie viele Dateien gefunden wurden. Für weitere Gruppen mit eigenem Ordner einfach noch eine Gruppe hinzufügen – Ordner und Dateibenennung gelten jeweils nur für diese Gruppe.
 
 Updates kommen danach automatisch.
 
 ## Im Alltag
 
-- **PDF öffnen**: Doppelklick wie gewohnt. Es öffnet sich im Zotero-Reader.
+- **PDF öffnen**: Doppelklick wie gewohnt. Es öffnet sich im Zotero-Reader. Mit WebDAV wird die Datei beim ersten Öffnen kurz heruntergeladen (dafür braucht es Internet); „Alle Dateien herunterladen“ in den Einstellungen holt alles auf einmal, z. B. vor einer Reise.
 - **Anmerkungen**: Markieren und kommentieren wie gewohnt. Sie werden über Zotero synchronisiert, die anderen sehen sie mit deinem Namen.
 - **Neues PDF hinzufügen**: Einfach wie gewohnt in Zotero auf den Eintrag ziehen. Nach etwa einer Minute benennt das Plugin die Datei nach unserem Schema um und kopiert sie in den HU-Box-Ordner:
   - ein Autor: `mueller_1987.pdf`

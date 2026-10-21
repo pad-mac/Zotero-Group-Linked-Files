@@ -38,6 +38,41 @@ python3 "$HERE/make-pdf.py" "$WORK/fixtures/other/Neu - 2024 - Hochgeschwindigke
 	"Hochgeschwindigkeit eine ganz andere Datei"
 python3 "$HERE/make-pdf.py" "$WORK/fixtures/scan_0042.pdf" "Versuchsanlage Emsland Scan"
 
+# A WebDAV server with basic auth (WsgiDAV; HU-Box's SeafDAV is built on it)
+DAV_PORT="${DAV_PORT:-18765}"
+mkdir -p "$WORK/dav/Bibliothek/Literatur/Unterordner"
+python3 "$HERE/make-pdf.py" "$WORK/dav/Bibliothek/Literatur/weber_1919.pdf" "Wissenschaft als Beruf"
+python3 "$HERE/make-pdf.py" "$WORK/dav/Bibliothek/Literatur/Mueller - 1987 - Magnetschwebebahn.pdf" \
+	"Die Magnetschwebebahn auf dem Server"
+python3 "$HERE/make-pdf.py" "$WORK/dav/Bibliothek/Literatur/klein_2002.pdf" "Schon da, nicht ueberschreiben"
+cat > "$WORK/dav.yaml" <<YAML
+host: 127.0.0.1
+port: $DAV_PORT
+provider_mapping:
+  "/": "$WORK/dav"
+http_authenticator:
+  accept_basic: true
+  accept_digest: false
+  default_to_digest: false
+simple_dc:
+  user_mapping:
+    "*":
+      "tester":
+        password: "geheim"
+verbose: 1
+YAML
+if python3 -c "import wsgidav, cheroot" 2> /dev/null; then
+	python3 -m wsgidav.server.server_cli --config "$WORK/dav.yaml" > "$WORK/dav.log" 2>&1 &
+	DAV_PID=$!
+	trap 'kill $DAV_PID 2>/dev/null' EXIT
+	for _ in $(seq 1 50); do
+		curl -s -o /dev/null "http://127.0.0.1:$DAV_PORT/" && break
+		sleep 0.2
+	done
+else
+	echo "WsgiDAV not installed (pip install wsgidav cheroot) - WebDAV checks will fail"
+fi
+
 # The plugin as users install it (the .xpi), plus the test harness as a second plugin
 cp "$XPI" "$WORK/profile/extensions/group-linked-files@pad-mac.github.io.xpi"
 (cd "$HERE/harness" && zip -q -r -X "$WORK/profile/extensions/glf-harness@pad-mac.github.io.xpi" .)
@@ -63,6 +98,8 @@ user_pref("extensions.group-linked-files.naming.enabled", false);
 user_pref("glf-harness.out", "$WORK/results.json");
 user_pref("glf-harness.dir", "$WORK");
 user_pref("glf-harness.screenshot", "${GLF_SCREENSHOT:-}");
+user_pref("glf-harness.screenshot2", "${GLF_SCREENSHOT2:-}");
+user_pref("glf-harness.davport", $DAV_PORT);
 EOF
 
 echo "Running Zotero: $ZOTERO_BIN"

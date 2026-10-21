@@ -57,6 +57,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q xvfb libdbus-glib-1-2 libgtk-3-0 libasound2t64 || \
           sudo apt-get install -y -q xvfb libdbus-glib-1-2 libgtk-3-0 libasound2
+          pip install --user wsgidav cheroot || pip install --break-system-packages wsgidav cheroot
       - if: steps.plan.outputs.mode != 'skip'
         name: Test the built .xpi inside Zotero
         run: XPI="$(ls build/*.xpi)" bash test/integration/run.sh

@@ -28,6 +28,9 @@ glf-blocked-modify = Zotero doesn’t change shared PDFs (rotating or deleting p
 
 ## Attach
 
+glf-webdav-password-prompt = WebDAV password for { $user } (group “{ $group }”):
+glf-webdav-login-needed = Group “{ $group }”: WebDAV login missing or wrong, so new files can’t be uploaded. Enter the password under Settings → Group Linked Files.
+glf-webdav-downloading = Loading { $name } …
 glf-attached = Attached: { $name }
 glf-confirm-duplicate =
     { $count ->
@@ -62,6 +65,11 @@ glf-error-invalid-name = Zotero can’t use this filename. Please rename the fil
 glf-error-choose-library = Select the library or a collection of a linked group first.
 glf-config-no-group = No group chosen for this link yet.
 glf-check-no-folder = No shared folder chosen on this computer.
+glf-webdav-error-login = WebDAV login missing or wrong. Check the user name and the WebDAV password (HU-Box: set it in the HU-Box web settings under “WebDAV Access”).
+glf-webdav-error-network = The WebDAV server can’t be reached.
+glf-webdav-error-notfound = This folder doesn’t exist on the WebDAV server.
+glf-webdav-error-status = The WebDAV server reported an error (HTTP { $status }).
+glf-webdav-empty = The WebDAV folder is empty.
 glf-error-file-missing = The file can’t be found anymore.
 glf-error-generic = Something went wrong: { $message }
 
@@ -77,6 +85,10 @@ glf-check-published = Copied to the shared folder just now: { $count }
 glf-check-renamed = Renamed because the name was taken: { $list }
 glf-check-errors = Could not be copied: { $list }
 glf-check-stranded = In Zotero Storage instead of the shared folder (probably added without the plugin): { $count }
+glf-check-no-webdav = No WebDAV folder set up on this computer yet.
+glf-check-webdav = WebDAV folder: { $url }
+glf-check-webdav-error = WebDAV folder { $url }: { $error }
+glf-check-local = Downloaded to this computer: { $count } of { $total }
 glf-check-missing-list = Missing files (not in the shared folder on this computer):
 glf-check-more = …and { $count } more
 
@@ -115,3 +127,25 @@ glf-prefs-config-nogroup = (no group chosen)
 glf-prefs-config-nofolder = no folder
 glf-prefs-remove-confirm = Remove the link for “{ $name }”? Files and items stay as they are; only this computer’s settings for the group are removed, and Zotero file syncing applies to the group again.
 glf-prefs-same-folder = Another linked group uses the same folder. That works, but file names of both groups then share one folder.
+glf-prefs-mode = Where the files are
+glf-prefs-mode-folder =
+    .label = Local folder (e.g. synced by the HU-Box client)
+glf-prefs-mode-webdav =
+    .label = WebDAV (HU-Box directly, without the client)
+glf-prefs-webdav-server = WebDAV address
+glf-prefs-webdav-path = Folder on the server
+glf-prefs-webdav-browse =
+    .label = Browse…
+glf-prefs-webdav-user = User name
+glf-prefs-webdav-password = WebDAV password
+glf-prefs-webdav-save =
+    .label = Save & Test
+glf-prefs-webdav-help = HU-Box: set a WebDAV password once in the HU-Box web interface (Settings → WebDAV Access); the user name is shown there too. The password is kept in Zotero’s password storage on this computer. Files are downloaded when you open them.
+glf-prefs-webdav-ok = Connected: { $files } files in this folder.
+glf-prefs-webdav-browse-title = Choose the folder on the server
+glf-prefs-webdav-browse-use = ✓ Use this folder: { $path }
+glf-prefs-webdav-browse-up = ↑ Up
+glf-prefs-download-all =
+    .label = Download All Files
+glf-prefs-download-progress = Downloading { $done } of { $total } …
+glf-prefs-download-done = Downloaded: { $count }

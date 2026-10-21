@@ -40,6 +40,9 @@ var GroupLinkedFiles = {
 	_paneID: null,
 	_lastNotice: 0,
 	_l10nObj: null,
+	_remoteCache: new Map(),
+	_passwords: new Map(),
+	_loginWarned: new Set(),
 
 	init({ id, version, rootURI, timers } = {}) {
 		this.id = id;
@@ -50,6 +53,9 @@ var GroupLinkedFiles = {
 		this._patches = [];
 		this._originals = {};
 		this._windows = new Map();
+		this._remoteCache = new Map();
+		this._passwords = new Map();
+		this._loginWarned = new Set();
 	},
 
 	log(msg) {
@@ -107,12 +113,27 @@ var GroupLinkedFiles = {
 		return list;
 	},
 
+	DEFAULT_WEBDAV: {
+		server: "https://box.hu-berlin.de/huboxdav/",
+		path: "",
+		user: "",
+	},
+
 	_normalizeConfig(c) {
 		let naming = (c.naming && typeof c.naming == "object") ? c.naming : {};
+		let webdav = (c.webdav && typeof c.webdav == "object") ? c.webdav : {};
+		let str = v => (typeof v == "string" ? v : "");
 		return {
 			id: typeof c.id == "string" && c.id ? c.id : Math.random().toString(36).slice(2, 10),
 			groupID: parseInt(c.groupID) > 0 ? parseInt(c.groupID) : 0,
-			basePath: typeof c.basePath == "string" ? c.basePath : "",
+			// "folder": a local (synced) folder · "webdav": a folder on a WebDAV server
+			mode: c.mode == "webdav" ? "webdav" : "folder",
+			basePath: str(c.basePath),
+			webdav: {
+				server: "server" in webdav ? str(webdav.server) : this.DEFAULT_WEBDAV.server,
+				path: str(webdav.path),
+				user: str(webdav.user),
+			},
 			naming: { ...this.DEFAULT_NAMING, ...naming },
 		};
 	},
@@ -138,7 +159,11 @@ var GroupLinkedFiles = {
 			...c,
 			...patch,
 			naming: { ...c.naming, ...(patch.naming || {}) },
+			webdav: { ...c.webdav, ...(patch.webdav || {}) },
 		})));
+		if (patch.webdav || patch.mode) {
+			this._remoteCache.delete(id);
+		}
 		this.setConfigs(list);
 		return this.getConfigByID(id);
 	},
@@ -187,10 +212,25 @@ var GroupLinkedFiles = {
 		}
 	},
 
-	/** Normalized shared folder of the library's group link on this computer, or null */
+	/** Normalized local shared folder of the library's group link, or null (also for WebDAV links) */
 	getBasePath(libraryID) {
 		let config = this.getConfig(libraryID);
-		return config ? this.normalizePath(config.basePath) : null;
+		return config && config.mode == "folder" ? this.normalizePath(config.basePath) : null;
+	},
+
+	isWebDAV(config) {
+		return !!config && config.mode == "webdav";
+	},
+
+	/** Has the link a place for files: a local folder, or a WebDAV folder and user name? */
+	hasLocation(config) {
+		if (!config) {
+			return false;
+		}
+		if (this.isWebDAV(config)) {
+			return !!(this.webdavFolderURL(config) && config.webdav.user);
+		}
+		return !!this.normalizePath(config.basePath);
 	},
 
 	isManagedLibrary(libraryID) {
@@ -204,7 +244,7 @@ var GroupLinkedFiles = {
 				&& item.isAttachment()
 				&& item.isStoredFileAttachment()
 				&& !(item.isEmbeddedImageAttachment && item.isEmbeddedImageAttachment())
-				&& !!this.getBasePath(item.libraryID);
+				&& this.hasLocation(this.getConfig(item.libraryID));
 		}
 		catch (e) {
 			return false;
@@ -256,7 +296,8 @@ var GroupLinkedFiles = {
 		if (!this.isValidSharedFilename(name)) {
 			return null;
 		}
-		return PathUtils.join(this.getBasePath(item.libraryID), name);
+		let base = this.getBasePath(item.libraryID);
+		return base ? PathUtils.join(base, name) : null;
 	},
 
 	/** Path of the attachment in Zotero's own storage folder (may not exist) */
@@ -305,8 +346,21 @@ var GroupLinkedFiles = {
 		return null;
 	},
 
-	/** True if a file with this attachment's name exists in the shared folder */
+	/**
+	 * True if a file with this attachment's name exists in the shared folder (local or
+	 * WebDAV). If the WebDAV server can't be reached, assume it does (the safe answer
+	 * for the guardrails).
+	 */
 	async isPublished(item) {
+		let config = this.getConfig(item.libraryID);
+		if (this.isWebDAV(config)) {
+			try {
+				return !!(await this.store(config).find(item.attachmentFilename));
+			}
+			catch (e) {
+				return true;
+			}
+		}
 		return !!(await this.findSharedFile(item));
 	},
 
@@ -497,8 +551,11 @@ var GroupLinkedFiles = {
 		);
 
 		// 4. Guardrail: never delete a file that exists in the shared folder
+		// (With WebDAV the local file is only a downloaded copy, so deleting it is fine.)
 		this._patch(ItemProto, "deleteAttachmentFile", orig => async function (...args) {
-			if (self._active && self.isManagedItem(this) && await self.isPublished(this)) {
+			if (self._active && self.isManagedItem(this)
+					&& !self.isWebDAV(self.getConfig(this.libraryID))
+					&& await self.isPublished(this)) {
 				self.log(`blocked file deletion for ${this.libraryKey}`);
 				self.notifyBlocked("delete");
 				return false;
@@ -544,6 +601,21 @@ var GroupLinkedFiles = {
 					}
 				}
 				return orig.call(this, filePath, itemID, ...rest);
+			});
+		}
+
+		// 8. WebDAV: download a file before Zotero's reader opens it
+		if (Zotero.Reader && typeof Zotero.Reader.open == "function") {
+			this._patch(Zotero.Reader, "open", orig => async function (itemID, ...rest) {
+				if (self._active) {
+					try {
+						await self.ensureLocal(Zotero.Items.get(itemID), { interactive: true });
+					}
+					catch (e) {
+						Zotero.logError(e);
+					}
+				}
+				return orig.call(this, itemID, ...rest);
 			});
 		}
 
@@ -613,6 +685,20 @@ var GroupLinkedFiles = {
 		}
 	},
 
+	/** A small "working…" window; returns { close() } */
+	_progress(text) {
+		try {
+			let pw = new Zotero.ProgressWindow({ closeOnClick: false });
+			pw.changeHeadline(this.l10n("glf-name"));
+			pw.addDescription(text);
+			pw.show();
+			return { close: () => pw.close() };
+		}
+		catch (e) {
+			return { close() {} };
+		}
+	},
+
 	notifyBlocked(kind) {
 		let now = Date.now();
 		if (now - this._lastNotice < 8000) {
@@ -636,11 +722,14 @@ var GroupLinkedFiles = {
 	},
 
 	async _contentType(path) {
-		let ext = (PathUtils.filename(path).match(/\.([^.]+)$/) || [])[1];
+		let ext = (String(path).split(/[\\/]/).pop().match(/\.([^.]+)$/) || [])[1];
 		if (ext && this._mimeByExtension[ext.toLowerCase()]) {
 			return this._mimeByExtension[ext.toLowerCase()];
 		}
 		try {
+			if (!(await IOUtils.exists(path))) {
+				return "application/octet-stream";
+			}
 			return (await Zotero.MIME.getMIMETypeFromFile(path)) || "application/octet-stream";
 		}
 		catch (e) {
@@ -664,10 +753,26 @@ var GroupLinkedFiles = {
 	 * Attach a file that is already in the shared folder to a parent item, without
 	 * copying it. Creates a normal stored-file attachment whose filename is the link.
 	 */
+	/**
+	 * Attach a file that is already in the shared folder to a parent item, without
+	 * copying it. Local folder: pass the file's path. WebDAV: pass the file name.
+	 */
 	async attachSharedFile(parentItem, filePath) {
 		if (!parentItem || !parentItem.isRegularItem()
 				|| !this.isManagedLibrary(parentItem.libraryID)) {
 			throw this._error("glf-error-not-group");
+		}
+		let config = this.getConfig(parentItem.libraryID);
+		if (this.isWebDAV(config)) {
+			let name = String(filePath).split("/").pop();
+			if (!this.isValidSharedFilename(name) || Zotero.File.getValidFileName(name) !== name) {
+				throw this._error("glf-error-invalid-name");
+			}
+			let remote = await this.store(config).find(name);
+			if (!remote) {
+				throw this._error("glf-error-file-missing");
+			}
+			return this._createAttachment(parentItem, remote);
 		}
 		let base = this.getBasePath(parentItem.libraryID);
 		if (!base || !(await IOUtils.exists(base))) {
@@ -683,7 +788,12 @@ var GroupLinkedFiles = {
 		if (!(await IOUtils.exists(filePath))) {
 			throw this._error("glf-error-file-missing");
 		}
-		let contentType = await this._contentType(filePath);
+		return this._createAttachment(parentItem, name, filePath);
+	},
+
+	/** A stored-file attachment record whose file lives in the shared folder */
+	async _createAttachment(parentItem, name, filePath = null) {
+		let contentType = await this._contentType(filePath || name);
 		let item = new Zotero.Item("attachment");
 		item.libraryID = parentItem.libraryID;
 		item.parentKey = parentItem.key;
@@ -786,13 +896,27 @@ var GroupLinkedFiles = {
 		let result = {
 			published: [], renamed: [], waiting: 0, errors: [], baseMissing: false
 		};
-		let base = this.getBasePath(libraryID);
-		if (!this._active || !base) {
+		let config = this.getConfig(libraryID);
+		if (!this._active || !this.hasLocation(config)) {
 			return result;
 		}
-		// If the shared folder isn't there (not synced, drive missing), do nothing
-		if (!(await IOUtils.exists(base))) {
+		let store = this.store(config);
+		// Shared folder missing (not synced, drive gone) or server unreachable: do nothing
+		let entries;
+		try {
+			entries = await store.list({ fresh: true });
+		}
+		catch (e) {
+			this.log(`shared folder not available: ${e.l10nId || e.message}`);
 			result.baseMissing = true;
+			result.error = e.l10nId || String(e.message || e);
+			// Tell once per session if the WebDAV login is missing or wrong
+			if (e.l10nId == "glf-webdav-error-login" && !this._loginWarned.has(config.id)) {
+				this._loginWarned.add(config.id);
+				let group = Zotero.Groups.get(config.groupID);
+				this.notify(this.l10n("glf-name"), this.l10n("glf-webdav-login-needed",
+					{ group: group ? group.name : String(config.groupID) }), 12000);
+			}
 			return result;
 		}
 		let delayMs = force
@@ -803,7 +927,7 @@ var GroupLinkedFiles = {
 			.filter(item => this.isManagedItem(item))
 			// Oldest first, so the earlier item gets "Name_1987" and later ones "…a", "…b"
 			.sort((a, b) => this._olderFirst(a, b));
-		let names = await this._buildNameIndex(base, attachments);
+		let names = this._buildNameIndex(entries.map(e => e.name), attachments);
 
 		for (let item of attachments) {
 			let name = item.attachmentFilename;
@@ -816,8 +940,8 @@ var GroupLinkedFiles = {
 				continue;
 			}
 			try {
-				let shared = await this.findSharedFile(item);
-				if (shared && await this._sameFile(local, shared)) {
+				let existing = await store.find(name);
+				if (existing && await store.sameAs(local, existing)) {
 					continue; // already in the shared folder
 				}
 				if (delayMs) {
@@ -831,29 +955,38 @@ var GroupLinkedFiles = {
 						continue;
 					}
 				}
-				let desired = this._desiredFilename(item, name, naming, names);
-				if (desired != name) {
-					let renamed = await this._originals.renameAttachmentFile.call(
-						item, desired, { overwrite: false, unique: false }
-					);
-					if (renamed !== true) {
-						result.errors.push({ name, error: "rename failed: " + renamed });
-						continue;
+				for (let attempt = 0; ; attempt++) {
+					let desired = this._desiredFilename(item, name, naming, names);
+					if (desired != name) {
+						let renamed = await this._originals.renameAttachmentFile.call(
+							item, desired, { overwrite: false, unique: false }
+						);
+						if (renamed !== true) {
+							throw new Error("rename failed: " + renamed);
+						}
+						let newName = item.attachmentFilename;
+						result.renamed.push({ from: name, to: newName });
+						names.moveAttachment(item.id, name, newName);
+						name = newName;
+						local = PathUtils.join(dir, name);
 					}
-					let newName = item.attachmentFilename;
-					result.renamed.push({ from: name, to: newName });
-					names.moveAttachment(item.id, name, newName);
-					name = newName;
-					local = PathUtils.join(dir, name);
+					// Never overwrites. If someone else took the name in the meantime,
+					// take the next free one.
+					if (await store.put(local, name)) {
+						break;
+					}
+					names.addFile(name);
+					if (attempt >= 3) {
+						throw new Error("name taken: " + name);
+					}
 				}
-				await IOUtils.copy(local, PathUtils.join(base, name), { noOverwrite: true });
 				names.addFile(name);
 				result.published.push(name);
 				this.log(`copied ${name} to shared folder`);
 			}
 			catch (e) {
 				Zotero.logError(e);
-				result.errors.push({ name, error: String(e && e.message || e) });
+				result.errors.push({ name, error: String(e && (e.l10nId || e.message) || e) });
 			}
 		}
 		return result;
@@ -864,11 +997,8 @@ var GroupLinkedFiles = {
 	 * attachments (also ones whose file isn't on this computer). Compared with
 	 * matchKey(), so "Müller_1987.pdf" and "mueller_1987.pdf" count as the same name.
 	 */
-	async _buildNameIndex(base, attachments) {
-		let files = new Set();
-		for (let path of await IOUtils.getChildren(base)) {
-			files.add(this.matchKey(PathUtils.filename(path)));
-		}
+	_buildNameIndex(fileNames, attachments) {
+		let files = new Set(fileNames.map(n => this.matchKey(n)));
 		let byName = new Map();
 		let add = (key, id) => {
 			if (!byName.has(key)) {
@@ -891,6 +1021,513 @@ var GroupLinkedFiles = {
 				add(this.matchKey(to), itemID);
 			},
 		};
+	},
+
+	// ------------------------------------------------------------------ stores
+
+	/**
+	 * Where a group link keeps its files. Same interface for a local folder and WebDAV:
+	 *   list({fresh})          -> [{ name, size }]  (files only; throws if unavailable)
+	 *   find(name)             -> actual name in the folder (Unicode form may differ) or null
+	 *   sameAs(localPath, name)-> is the shared file the same as this local file?
+	 *   put(localPath, name)   -> true if stored, false if the name is taken (never overwrites)
+	 *   fetch(name, destPath)  -> download (WebDAV only)
+	 */
+	store(config) {
+		return this.isWebDAV(config) ? this._webdavStore(config) : this._folderStore(config);
+	},
+
+	_folderStore(config) {
+		let base = this.normalizePath(config.basePath);
+		let self = this;
+		return {
+			kind: "folder",
+			async list() {
+				if (!base || !(await IOUtils.exists(base))) {
+					throw self._error("glf-error-no-folder");
+				}
+				let out = [];
+				for (let path of await IOUtils.getChildren(base)) {
+					let info;
+					try {
+						info = await IOUtils.stat(path);
+					}
+					catch (e) {
+						continue;
+					}
+					if (info.type && info.type != "regular") {
+						continue;
+					}
+					out.push({ name: PathUtils.filename(path), size: info.size });
+				}
+				return out;
+			},
+			async find(name) {
+				if (!base || !self.isValidSharedFilename(name)) {
+					return null;
+				}
+				for (let variant of self._nameVariants(name)) {
+					if (await IOUtils.exists(PathUtils.join(base, variant))) {
+						return variant;
+					}
+				}
+				return null;
+			},
+			async sameAs(localPath, name) {
+				return self._sameFile(localPath, PathUtils.join(base, name));
+			},
+			async put(localPath, name) {
+				let target = PathUtils.join(base, name);
+				if (await IOUtils.exists(target)) {
+					return false;
+				}
+				await IOUtils.copy(localPath, target, { noOverwrite: true });
+				return true;
+			},
+			async fetch() {
+				throw new Error("not needed for local folders");
+			},
+		};
+	},
+
+	_webdavStore(config) {
+		let self = this;
+		let url = this.webdavFolderURL(config);
+		let cached = async (fresh) => {
+			let hit = self._remoteCache.get(config.id);
+			if (!fresh && hit && Date.now() - hit.at < self.LIST_TTL_MS) {
+				return hit.entries;
+			}
+			let entries = (await self.webdavList(config, url)).filter(e => !e.isDir);
+			self._remoteCache.set(config.id, { at: Date.now(), entries });
+			return entries;
+		};
+		let lookup = async (name) => {
+			let entries = await cached(false);
+			let variants = self._nameVariants(name);
+			let hit = entries.find(e => variants.includes(e.name));
+			if (!hit) {
+				// Maybe added since the last listing
+				entries = await cached(true);
+				hit = entries.find(e => variants.includes(e.name));
+			}
+			return hit || null;
+		};
+		return {
+			kind: "webdav",
+			url,
+			async list({ fresh = false } = {}) {
+				return cached(fresh);
+			},
+			async find(name) {
+				if (!self.isValidSharedFilename(name)) {
+					return null;
+				}
+				let hit = await lookup(name);
+				return hit ? hit.name : null;
+			},
+			async sameAs(localPath, name) {
+				// No checksums over WebDAV: same name and same size counts as the same file
+				let hit = await lookup(name);
+				let stat = await IOUtils.stat(localPath);
+				return !!hit && hit.size != null && hit.size == stat.size;
+			},
+			async put(localPath, name) {
+				if (await lookup(name)) {
+					return false;
+				}
+				let ok = await self.webdavPut(config, url + encodeURIComponent(name), localPath);
+				self._remoteCache.delete(config.id);
+				return ok;
+			},
+			async fetch(name, destPath) {
+				return self.webdavGet(config, url + encodeURIComponent(name), destPath);
+			},
+		};
+	},
+
+	// ------------------------------------------------------------------ WebDAV
+
+	LOGIN_ORIGIN: "chrome://group-linked-files",
+	LIST_TTL_MS: 60 * 1000,
+
+	/** Folder URL with trailing slash: server + encoded path segments, or null */
+	webdavFolderURL(config) {
+		let w = config && config.webdav;
+		if (!w) {
+			return null;
+		}
+		let server = String(w.server || "").trim();
+		if (!/^https?:\/\/[^/]+/i.test(server)) {
+			return null;
+		}
+		if (!server.endsWith("/")) {
+			server += "/";
+		}
+		let segments = String(w.path || "").split("/").map(s => s.trim()).filter(Boolean);
+		return server + segments.map(s => encodeURIComponent(s)).join("/")
+			+ (segments.length ? "/" : "");
+	},
+
+	_loginManager() {
+		return Services.logins;
+	},
+
+	async _findLogins(realm) {
+		let lm = this._loginManager();
+		if (lm.searchLoginsAsync) {
+			return lm.searchLoginsAsync({ origin: this.LOGIN_ORIGIN, httpRealm: realm });
+		}
+		return lm.findLogins(this.LOGIN_ORIGIN, null, realm);
+	},
+
+	/** WebDAV password of a group link, from Zotero's password storage */
+	async getPassword(config) {
+		if (this._passwords.has(config.id)) {
+			return this._passwords.get(config.id);
+		}
+		try {
+			let logins = await this._findLogins(config.id);
+			let login = logins.find(l => l.username == config.webdav.user) || null;
+			let password = login ? login.password : null;
+			if (password) {
+				this._passwords.set(config.id, password);
+			}
+			return password;
+		}
+		catch (e) {
+			Zotero.logError(e);
+			return null;
+		}
+	},
+
+	async setPassword(config, password) {
+		this._passwords.delete(config.id);
+		this._remoteCache.delete(config.id);
+		let lm = this._loginManager();
+		for (let login of await this._findLogins(config.id)) {
+			if (lm.removeLoginAsync) {
+				await lm.removeLoginAsync(login);
+			}
+			else {
+				lm.removeLogin(login);
+			}
+		}
+		if (!password) {
+			return;
+		}
+		let LoginInfo = Components.Constructor("@mozilla.org/login-manager/loginInfo;1",
+			Components.interfaces.nsILoginInfo, "init");
+		let info = new LoginInfo(this.LOGIN_ORIGIN, null, config.id,
+			config.webdav.user || "", password, "", "");
+		if (lm.addLoginAsync) {
+			await lm.addLoginAsync(info);
+		}
+		else {
+			lm.addLogin(info);
+		}
+		this._passwords.set(config.id, password);
+		this._loginWarned.delete(config.id);
+	},
+
+	_base64(str) {
+		let bytes = unescape(encodeURIComponent(str));
+		let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+		let out = "";
+		for (let i = 0; i < bytes.length; i += 3) {
+			let n = (bytes.charCodeAt(i) << 16)
+				| ((bytes.charCodeAt(i + 1) || 0) << 8)
+				| (bytes.charCodeAt(i + 2) || 0);
+			out += chars[(n >> 18) & 63] + chars[(n >> 12) & 63]
+				+ (i + 1 < bytes.length ? chars[(n >> 6) & 63] : "=")
+				+ (i + 2 < bytes.length ? chars[n & 63] : "=");
+		}
+		return out;
+	},
+
+	_XHR() {
+		if (typeof XMLHttpRequest != "undefined") {
+			return XMLHttpRequest;
+		}
+		try {
+			Components.utils.importGlobalProperties(["XMLHttpRequest"]);
+			if (typeof XMLHttpRequest != "undefined") {
+				return XMLHttpRequest;
+			}
+		}
+		catch (e) {}
+		return Zotero.getMainWindow().XMLHttpRequest;
+	},
+
+	/**
+	 * One WebDAV request with the link's login. Anonymous XHR (no cookies, no browser
+	 * login dialog); the Authorization header is sent with every request.
+	 */
+	async webdavRequest(config, method, url, { headers = {}, body = null, responseType = "", password = null } = {}) {
+		let user = config.webdav.user;
+		password = password ?? await this.getPassword(config);
+		if (!user || !password) {
+			throw this._error("glf-webdav-error-login");
+		}
+		let XHR = this._XHR();
+		let xhr = await new Promise((resolve, reject) => {
+			let req = new XHR({ mozAnon: true });
+			req.open(method, url, true);
+			req.setRequestHeader("Authorization", "Basic " + this._base64(user + ":" + password));
+			for (let [key, value] of Object.entries(headers)) {
+				req.setRequestHeader(key, value);
+			}
+			if (responseType) {
+				req.responseType = responseType;
+			}
+			req.timeout = 5 * 60 * 1000;
+			req.onload = () => resolve(req);
+			req.onerror = () => reject(this._error("glf-webdav-error-network"));
+			req.ontimeout = () => reject(this._error("glf-webdav-error-network"));
+			req.send(body);
+		});
+		if (xhr.status == 401 || xhr.status == 403) {
+			this._passwords.delete(config.id);
+			throw this._error("glf-webdav-error-login");
+		}
+		return xhr;
+	},
+
+	/** Folder listing: [{ name, isDir, size }] (the folder itself is left out) */
+	async webdavList(config, url, { password = null } = {}) {
+		let body = '<?xml version="1.0" encoding="utf-8"?>'
+			+ '<D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/><D:getcontentlength/>'
+			+ "</D:prop></D:propfind>";
+		let xhr = await this.webdavRequest(config, "PROPFIND", url, {
+			headers: { Depth: "1", "Content-Type": "application/xml; charset=utf-8" },
+			body,
+			password,
+		});
+		if (xhr.status == 404) {
+			throw this._error("glf-webdav-error-notfound");
+		}
+		if (xhr.status != 207) {
+			throw this._error("glf-webdav-error-status", { status: xhr.status });
+		}
+		return this.parseMultistatus(xhr.responseText, url);
+	},
+
+	/** Parse a PROPFIND reply. Namespace prefixes vary by server, so match loosely. */
+	parseMultistatus(xml, requestURL) {
+		let tag = name => `<(?:[\\w.-]+:)?${name}\\b[^>]*>`;
+		let close = name => `</(?:[\\w.-]+:)?${name}>`;
+		let entities = s => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
+			.replace(/&apos;/g, "'").replace(/&#(\d+);/g, (m, n) => String.fromCharCode(n))
+			.replace(/&amp;/g, "&");
+		let pathOf = (href) => {
+			let p = href.replace(/^https?:\/\/[^/]+/i, "");
+			return p.split("/").map((seg) => {
+				try {
+					return decodeURIComponent(seg);
+				}
+				catch (e) {
+					return seg;
+				}
+			}).join("/").replace(/\/+$/, "");
+		};
+		let self = pathOf(requestURL);
+		let out = [];
+		let responseRe = new RegExp(tag("response") + "([\\s\\S]*?)" + close("response"), "g");
+		for (let m of xml.matchAll(responseRe)) {
+			let block = m[1];
+			let href = block.match(new RegExp(tag("href") + "([\\s\\S]*?)" + close("href")));
+			if (!href) {
+				continue;
+			}
+			let path = pathOf(entities(href[1].trim()));
+			if (path == self) {
+				continue;
+			}
+			let name = path.split("/").pop();
+			if (!name) {
+				continue;
+			}
+			let isDir = new RegExp("<(?:[\\w.-]+:)?collection\\b").test(block);
+			let len = block.match(new RegExp(tag("getcontentlength") + "\\s*(\\d+)\\s*<"));
+			out.push({ name, isDir, size: len ? parseInt(len[1]) : null });
+		}
+		return out;
+	},
+
+	/** Download to destPath (via a temporary file, so a broken download leaves nothing) */
+	async webdavGet(config, url, destPath) {
+		let xhr = await this.webdavRequest(config, "GET", url, { responseType: "arraybuffer" });
+		if (xhr.status == 404) {
+			throw this._error("glf-webdav-error-notfound");
+		}
+		if (xhr.status != 200) {
+			throw this._error("glf-webdav-error-status", { status: xhr.status });
+		}
+		let tmp = destPath + ".glf-download";
+		await IOUtils.write(tmp, new Uint8Array(xhr.response));
+		await IOUtils.move(tmp, destPath);
+		return true;
+	},
+
+	/** Upload without overwriting. Returns false if the name is taken on the server. */
+	async webdavPut(config, url, localPath) {
+		let data = await IOUtils.read(localPath);
+		let xhr = await this.webdavRequest(config, "PUT", url, {
+			headers: { "If-None-Match": "*", "Content-Type": "application/octet-stream" },
+			body: data,
+		});
+		if (xhr.status == 412) {
+			return false;
+		}
+		if (xhr.status != 200 && xhr.status != 201 && xhr.status != 204) {
+			throw this._error("glf-webdav-error-status", { status: xhr.status });
+		}
+		return true;
+	},
+
+	/** Connection test for the settings pane: number of files in the folder */
+	async testWebDAV(config, password = null) {
+		let entries = await this.webdavList(config, this.webdavFolderURL(config), { password });
+		return { files: entries.filter(e => !e.isDir).length, folders: entries.filter(e => e.isDir).length };
+	},
+
+	/** Subfolders of a server path (for the folder browser in the settings pane) */
+	async webdavSubfolders(config, path, password = null) {
+		let probe = { ...config, webdav: { ...config.webdav, path } };
+		let entries = await this.webdavList(probe, this.webdavFolderURL(probe), { password });
+		return entries.filter(e => e.isDir).map(e => e.name).sort((a, b) => a.localeCompare(b));
+	},
+
+	/**
+	 * WebDAV links: make sure an attachment's file is on this computer (download into
+	 * Zotero's storage folder). Returns true if the file is there afterwards.
+	 */
+	async ensureLocal(item, { interactive = false } = {}) {
+		if (!item || !this.isManagedItem(item)) {
+			return false;
+		}
+		let config = this.getConfig(item.libraryID);
+		if (!this.isWebDAV(config)) {
+			return false;
+		}
+		let name = item.attachmentFilename;
+		let dir = Zotero.Attachments.getStorageDirectory(item).path;
+		let local = PathUtils.join(dir, name);
+		if (await IOUtils.exists(local)) {
+			return true;
+		}
+		let store = this.store(config);
+		for (let attempt = 0; attempt < 2; attempt++) {
+			let progress = null;
+			try {
+				let remote = await store.find(name);
+				if (!remote) {
+					return false;
+				}
+				await Zotero.File.createDirectoryIfMissingAsync(dir);
+				if (interactive) {
+					progress = this._progress(this.l10n("glf-webdav-downloading", { name }));
+				}
+				await store.fetch(remote, local);
+				if (progress) {
+					progress.close();
+				}
+				if (typeof item._updateAttachmentStates == "function") {
+					item._updateAttachmentStates(true);
+				}
+				this.log(`downloaded ${name}`);
+				return true;
+			}
+			catch (e) {
+				if (progress) {
+					progress.close();
+				}
+				if (interactive && attempt == 0 && e.l10nId == "glf-webdav-error-login"
+						&& await this.promptPassword(config)) {
+					continue;
+				}
+				if (interactive && e.l10nId) {
+					this.notify(this.l10n("glf-name"), this.l10n(e.l10nId, e.l10nArgs), 8000);
+				}
+				throw e;
+			}
+		}
+		return false;
+	},
+
+	async _ensureLocalForIDs(itemIDs) {
+		let ids = Array.isArray(itemIDs) ? itemIDs : [itemIDs];
+		for (let id of ids) {
+			let item = Zotero.Items.get(id);
+			if (!item) {
+				continue;
+			}
+			let attachments = item.isRegularItem()
+				? Zotero.Items.get(item.getAttachments()).filter(Boolean)
+				: [item];
+			for (let attachment of attachments) {
+				if (this.isManagedItem(attachment)
+						&& this.isWebDAV(this.getConfig(attachment.libraryID))) {
+					await this.ensureLocal(attachment, { interactive: true });
+				}
+			}
+		}
+	},
+
+	/** Ask for the WebDAV password (after a failed login). Saves it if entered. */
+	async promptPassword(config) {
+		let win = Zotero.getMainWindow();
+		let password = { value: "" };
+		let group = Zotero.Groups.get(config.groupID);
+		let ok = Services.prompt.promptPassword(
+			win,
+			this.l10n("glf-name"),
+			this.l10n("glf-webdav-password-prompt", {
+				user: config.webdav.user,
+				group: group ? group.name : String(config.groupID),
+			}),
+			password,
+			null,
+			{ value: false }
+		);
+		if (!ok || !password.value) {
+			return false;
+		}
+		await this.setPassword(config, password.value);
+		return true;
+	},
+
+	/** Download every file of a WebDAV link that isn't on this computer yet */
+	async downloadAll(config, onProgress = () => {}) {
+		let libraryID = this.getLibraryIDForConfig(config);
+		if (!libraryID || !this.isWebDAV(config)) {
+			return { downloaded: 0, failed: [] };
+		}
+		let items = (await this._getLibraryItems(libraryID)).filter(i => this.isManagedItem(i));
+		let todo = [];
+		for (let item of items) {
+			if (!(await IOUtils.exists(this.getLocalPath(item)))) {
+				todo.push(item);
+			}
+		}
+		let downloaded = 0;
+		let failed = [];
+		for (let i = 0; i < todo.length; i++) {
+			onProgress(i, todo.length);
+			try {
+				if (await this.ensureLocal(todo[i])) {
+					downloaded++;
+				}
+			}
+			catch (e) {
+				failed.push(todo[i].attachmentFilename);
+				if (e.l10nId == "glf-webdav-error-login" || e.l10nId == "glf-webdav-error-network") {
+					throw e;
+				}
+			}
+		}
+		onProgress(todo.length, todo.length);
+		return { downloaded, failed };
 	},
 
 	/** Name a new file should get before it's copied into the shared folder */
@@ -1127,10 +1764,11 @@ var GroupLinkedFiles = {
 		if (!libraryID || !this.isManagedLibrary(libraryID)) {
 			throw this._error("glf-error-choose-library");
 		}
-		let base = this.getBasePath(libraryID);
-		if (!base || !(await IOUtils.exists(base))) {
+		let config = this.getConfig(libraryID);
+		if (!this.hasLocation(config)) {
 			throw this._error("glf-error-no-folder");
 		}
+		let entries = await this.store(config).list({ fresh: true });
 		let settings = this.getNamingSettings(libraryID);
 		let all = await this._getLibraryItems(libraryID);
 		let linked = new Set(all
@@ -1138,19 +1776,8 @@ var GroupLinkedFiles = {
 			.map(i => this.matchKey(i.attachmentFilename || "")));
 
 		let index = new Map();
-		for (let path of await IOUtils.getChildren(base)) {
-			let name = PathUtils.filename(path);
+		for (let { name } of entries) {
 			if (name.startsWith(".") || linked.has(this.matchKey(name))) {
-				continue;
-			}
-			let info;
-			try {
-				info = await IOUtils.stat(path);
-			}
-			catch (e) {
-				continue;
-			}
-			if (info.type && info.type != "regular") {
 				continue;
 			}
 			let key = this.matchKey(this._stem(name));
@@ -1193,9 +1820,10 @@ var GroupLinkedFiles = {
 		let linked = 0;
 		let errors = [];
 		for (let { item, file } of matches) {
+			// Local folder: full path; WebDAV: the file name is enough
 			let base = this.getBasePath(item.libraryID);
 			try {
-				await this.attachSharedFile(item, PathUtils.join(base, file));
+				await this.attachSharedFile(item, base ? PathUtils.join(base, file) : file);
 				linked++;
 			}
 			catch (e) {
@@ -1226,16 +1854,21 @@ var GroupLinkedFiles = {
 	/** Status of one group link: what's found, missing, stuck in Zotero Storage */
 	async getStatus(config) {
 		let libraryID = this.getLibraryIDForConfig(config);
-		let basePath = config ? this.normalizePath(config.basePath) : null;
+		let webdav = this.isWebDAV(config);
+		let basePath = config && !webdav ? this.normalizePath(config.basePath) : null;
 		let status = {
 			configured: false,
 			groupID: config ? config.groupID : 0,
 			libraryID,
 			groupName: null,
+			mode: config ? config.mode : "folder",
 			basePath,
+			webdavURL: webdav ? this.webdavFolderURL(config) : null,
 			baseExists: false,
+			baseError: null,
 			total: 0,
 			found: 0,
+			local: 0,
 			missing: [],
 			stranded: [],
 		};
@@ -1243,10 +1876,18 @@ var GroupLinkedFiles = {
 			let group = Zotero.Groups.get(config.groupID);
 			status.groupName = group ? group.name : null;
 		}
-		if (basePath) {
-			status.baseExists = await IOUtils.exists(basePath);
+		status.configured = !!(libraryID && this.hasLocation(config));
+		if (!config || !this.hasLocation(config)) {
+			return status;
 		}
-		status.configured = !!(libraryID && basePath);
+		let store = this.store(config);
+		try {
+			await store.list({ fresh: true });
+			status.baseExists = true;
+		}
+		catch (e) {
+			status.baseError = e.l10nId || String(e.message || e);
+		}
 		if (!status.configured) {
 			return status;
 		}
@@ -1256,6 +1897,11 @@ var GroupLinkedFiles = {
 			}
 			status.total++;
 			if (await item.getFilePathAsync()) {
+				status.found++;
+				status.local++;
+				continue;
+			}
+			if (webdav && status.baseExists && await store.find(item.attachmentFilename)) {
 				status.found++;
 				continue;
 			}
@@ -1309,6 +1955,30 @@ var GroupLinkedFiles = {
 			});
 			return el;
 		};
+
+		// WebDAV: download files before Zotero opens them (double-click, View PDF, …)
+		let pane = win.ZoteroPane;
+		if (pane && typeof pane.viewAttachment == "function") {
+			let original = pane.viewAttachment;
+			let self = this;
+			let wrapper = async function (itemIDs, ...rest) {
+				if (self._active) {
+					try {
+						await self._ensureLocalForIDs(itemIDs);
+					}
+					catch (e) {
+						Zotero.logError(e);
+					}
+				}
+				return original.call(this, itemIDs, ...rest);
+			};
+			pane.viewAttachment = wrapper;
+			cleanups.push(() => {
+				if (pane.viewAttachment === wrapper) {
+					pane.viewAttachment = original;
+				}
+			});
+		}
 
 		// Item context menu: "Attach file from shared folder…"
 		let itemMenu = doc.getElementById("zotero-itemmenu");
@@ -1413,16 +2083,44 @@ var GroupLinkedFiles = {
 		Services.prompt.alert(win, this.l10n("glf-name"), text);
 	},
 
-	async cmdAttach(win) {
-		if (!this._attachApplies(win)) {
-			this._alert(win, this.l10n("glf-error-not-group"));
-			return;
+	/**
+	 * Let the user choose a file from the item's shared folder: a file dialog for local
+	 * folders, a list of the server's files for WebDAV (names matching the item first).
+	 * Returns a path (folder) or a file name (WebDAV), or null.
+	 */
+	async _pickSharedFile(win, parent) {
+		let config = this.getConfig(parent.libraryID);
+		if (this.isWebDAV(config)) {
+			let entries;
+			try {
+				entries = await this.store(config).list({ fresh: true });
+			}
+			catch (e) {
+				if (e.l10nId == "glf-webdav-error-login" && await this.promptPassword(config)) {
+					return this._pickSharedFile(win, parent);
+				}
+				this._alert(win, e.l10nId ? this.l10n(e.l10nId, e.l10nArgs) : String(e.message || e));
+				return null;
+			}
+			if (!entries.length) {
+				this._alert(win, this.l10n("glf-webdav-empty"));
+				return null;
+			}
+			let key = this.matchKey(this.getBaseNameForItem(parent));
+			let names = entries.map(e => e.name).sort((a, b) => {
+				let am = this.matchKey(a).startsWith(key) ? 0 : 1;
+				let bm = this.matchKey(b).startsWith(key) ? 0 : 1;
+				return am - bm || a.localeCompare(b);
+			});
+			let selected = { value: 0 };
+			let ok = Services.prompt.select(win, this.l10n("glf-name"),
+				this.l10n("glf-picker-title"), names, selected);
+			return ok ? names[selected.value] : null;
 		}
-		let parent = win.ZoteroPane.getSelectedItems()[0];
 		let base = this.getBasePath(parent.libraryID);
 		if (!base || !(await IOUtils.exists(base))) {
 			this._alert(win, this.l10n("glf-error-no-folder"));
-			return;
+			return null;
 		}
 		let { FilePicker } = ChromeUtils.importESModule(
 			"chrome://zotero/content/modules/filePicker.mjs"
@@ -1433,15 +2131,28 @@ var GroupLinkedFiles = {
 		fp.appendFilter("PDF", "*.pdf");
 		fp.appendFilters(fp.filterAll);
 		if (await fp.show() != fp.returnOK) {
-			return;
+			return null;
 		}
 		let path = fp.file;
 		if (path && typeof path == "object") {
 			path = path.path;
 		}
+		return path;
+	},
+
+	async cmdAttach(win) {
+		if (!this._attachApplies(win)) {
+			this._alert(win, this.l10n("glf-error-not-group"));
+			return;
+		}
+		let parent = win.ZoteroPane.getSelectedItems()[0];
+		let path = await this._pickSharedFile(win, parent);
+		if (!path) {
+			return;
+		}
 		try {
 			let others = await this.findAttachmentsByFilename(
-				parent.libraryID, PathUtils.filename(path)
+				parent.libraryID, String(path).split(/[\\/]/).pop()
 			);
 			if (others.length && !Services.prompt.confirm(
 				win,
@@ -1506,16 +2217,34 @@ var GroupLinkedFiles = {
 			return [this.l10n("glf-group-not-found", { id: s.groupID })];
 		}
 		let lines = [this.l10n("glf-check-group", { name: s.groupName || String(s.groupID) })];
-		if (!s.basePath) {
-			lines.push(this.l10n("glf-check-no-folder"));
-			return lines;
+		if (s.mode == "webdav") {
+			if (!s.webdavURL) {
+				lines.push(this.l10n("glf-check-no-webdav"));
+				return lines;
+			}
+			lines.push(s.baseExists
+				? this.l10n("glf-check-webdav", { url: s.webdavURL })
+				: this.l10n("glf-check-webdav-error", {
+					url: s.webdavURL,
+					error: s.baseError && s.baseError.startsWith("glf-")
+						? this.l10n(s.baseError) : String(s.baseError),
+				}));
 		}
-		lines.push(s.baseExists
-			? this.l10n("glf-check-folder", { path: s.basePath })
-			: this.l10n("glf-check-folder-missing", { path: s.basePath }));
+		else {
+			if (!s.basePath) {
+				lines.push(this.l10n("glf-check-no-folder"));
+				return lines;
+			}
+			lines.push(s.baseExists
+				? this.l10n("glf-check-folder", { path: s.basePath })
+				: this.l10n("glf-check-folder-missing", { path: s.basePath }));
+		}
 		lines.push(this.l10n("glf-check-counts", {
 			total: s.total, found: s.found, missing: s.missing.length
 		}));
+		if (s.mode == "webdav" && s.total) {
+			lines.push(this.l10n("glf-check-local", { count: s.local, total: s.total }));
+		}
 		if (published) {
 			if (published.published.length) {
 				lines.push(this.l10n("glf-check-published", { count: published.published.length }));

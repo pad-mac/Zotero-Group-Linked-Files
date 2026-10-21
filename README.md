@@ -20,6 +20,19 @@ German team guide: [docs/ANLEITUNG.md](docs/ANLEITUNG.md)
 - Existing PDFs in the shared folder are attached with **right-click → "Attach File from Shared Folder…"**, or all at once with **"Link Matching Files…"** (see below) – nothing is copied.
 - Filenames are found in either Unicode form (macOS often stores "ü" differently from Windows).
 
+## WebDAV: the shared folder without a sync client
+
+Instead of a local folder, a group link can point straight to a folder on a WebDAV server – for HU-Box: `https://box.hu-berlin.de/huboxdav/` plus the library/folder path. No Seafile client needed.
+
+- **Opening** a file downloads it once into Zotero's own storage folder, then it opens in Zotero's reader as usual. "Download All Files" (settings → Status) fetches everything, e.g. for offline work or full-text search.
+- **New files** are named with the scheme and uploaded. Uploads use `If-None-Match: *`, so an existing file on the server is never overwritten; a taken name gets the next letter.
+- **"Link Matching Files"** and "Attach File from Shared Folder…" work on the server's listing.
+- **Login:** user name and a WebDAV password per computer. HU-Box: set the WebDAV password once in the HU-Box web interface (Settings → WebDAV); the user name is shown there. The password is kept in Zotero's password storage, not in the plugin settings. If it's wrong or missing, the plugin asks when you open a file and warns once if uploads fail.
+- Same guardrails: nothing on the server is ever renamed, moved or deleted. The downloaded copy is only a cache.
+- A file counts as "already on the server" if a file with the same name and size is there (WebDAV has no checksums).
+
+Settings: *Settings → Group Linked Files* → select the link → **Where the files are: WebDAV** → address, folder (with **Browse…**), user name, password → **Save & Test**.
+
 ## File naming
 
 New files get a name from the parent item, independent of Zotero's own naming setting. Default scheme `{authors}_{year}`:
@@ -71,6 +84,7 @@ Updates install automatically. Every team member needs the plugin; without it, t
 ## Limitations
 
 - **Flat folder**: files must be directly in the shared folder, not in subfolders.
+- **WebDAV links need the network** for files that haven't been opened on this computer yet.
 - **Everyone who adds files needs the plugin.** Without it, Zotero uploads new PDFs to the group owner's Zotero Storage instead of the shared folder (the status check lists them), and the shared PDFs show as "file not found".
 - **Don't rename files in the shared folder.** That breaks the link for everyone. *Tools → Group Linked Files → Check Shared Folder Now* lists missing files.
 - Desktop only: Zotero for iOS/Android and the web library don't get the PDFs.
@@ -88,7 +102,7 @@ ZOTERO_CHANNEL=beta npm run test:zotero
 ZOTERO_VERSION=7.0.24 npm run test:zotero
 ```
 
-The integration test installs the built `.xpi` into a fresh Zotero profile, creates a group, and checks: attaching from the folder, opening in the reader, saving annotations, full-text indexing, every guardrail, the per-group sync switch, copying and naming new files (a/b, ua, editors), Unicode filename forms, linking matching files (incl. collection scope), detecting files stuck in Zotero Storage, a second linked group with its own folder and naming, migrating 0.2 settings, removing a link, trash handling, menus, the settings pane, localization and clean shutdown.
+The integration test installs the built `.xpi` into a fresh Zotero profile, creates a group, and checks: attaching from the folder, opening in the reader, saving annotations, full-text indexing, every guardrail, the per-group sync switch, copying and naming new files (a/b, ua, editors), Unicode filename forms, linking matching files (incl. collection scope), detecting files stuck in Zotero Storage, a second linked group with its own folder and naming, a WebDAV link against a real WebDAV server (WsgiDAV, which HU-Box's SeafDAV is based on: login, download on open, reader, upload without overwriting, link matching, download all), migrating 0.2 settings, removing a link, trash handling, menus, the settings pane, localization and clean shutdown.
 
 Tested with Zotero **7.0.24, 9.0.6, 10.0.6 and 11.0 beta 1**.
 

@@ -531,3 +531,178 @@ describe("settings storage", () => {
 		assert.equal(await a.getFilePathAsync(), false);
 	});
 });
+
+describe("WebDAV links", () => {
+	const LIB = 3;
+	// In-memory WebDAV server: name -> Buffer
+	const fakeServer = (glf, files = {}) => {
+		const server = new Map(Object.entries(files).map(([k, v]) => [k, Buffer.from(v)]));
+		const calls = { list: 0, get: 0, put: 0 };
+		glf.getPassword = async () => "geheim";
+		glf.webdavList = async () => {
+			calls.list++;
+			return [...server].map(([name, data]) => ({ name, isDir: false, size: data.length }));
+		};
+		glf.webdavGet = async (config, url, dest) => {
+			calls.get++;
+			const name = decodeURIComponent(url.split("/").pop());
+			fs.writeFileSync(dest, server.get(name));
+			return true;
+		};
+		glf.webdavPut = async (config, url, local) => {
+			calls.put++;
+			const name = decodeURIComponent(url.split("/").pop());
+			if (server.has(name)) {
+				return false;
+			}
+			server.set(name, fs.readFileSync(local));
+			return true;
+		};
+		return { server, calls };
+	};
+	const addWebDAV = (naming = {}) => env.glf.addConfig({
+		id: "w1", groupID: 815, mode: "webdav",
+		webdav: { server: "https://box.example/dav", path: "Projekt/Literatur", user: "tester" },
+		naming,
+	});
+
+	test("folder URL is built from server and encoded path", () => {
+		env = makeEnv();
+		const c = addWebDAV();
+		assert.equal(env.glf.webdavFolderURL(c), "https://box.example/dav/Projekt/Literatur/");
+		const c2 = env.glf.updateConfig("w1", { webdav: { path: "Über uns/Texte 2024" } });
+		assert.equal(env.glf.webdavFolderURL(c2),
+			"https://box.example/dav/%C3%9Cber%20uns/Texte%202024/");
+	});
+
+	test("files are not redirected but downloaded into Zotero storage on open", async () => {
+		env = makeEnv();
+		addWebDAV();
+		const { calls } = fakeServer(env.glf, { "mueller_1987.pdf": "PDFDATA" });
+		const a = env.addAttachment("mueller_1987.pdf", { lib: LIB });
+		assert.equal(await a.getFilePathAsync(), false);
+		assert.equal(await env.glf.ensureLocal(a), true);
+		const local = path.join(env.storage, a.key, "mueller_1987.pdf");
+		assert.equal(fs.readFileSync(local, "utf8"), "PDFDATA");
+		assert.equal(await a.getFilePathAsync(), local);
+		assert.equal(await env.glf.ensureLocal(a), true);
+		assert.equal(calls.get, 1);
+	});
+
+	test("file sync is off and guardrails apply", async () => {
+		env = makeEnv();
+		addWebDAV();
+		fakeServer(env.glf, { "x.pdf": "X" });
+		assert.equal(env.Local.getEnabledForLibrary(LIB), false);
+		const a = env.addAttachment("x.pdf", { lib: LIB, local: "X" });
+		assert.equal(await a.renameAttachmentFile("y.pdf"), -2);
+		await env.Zotero.PDFWorker.rotatePages(a.id, [0], 90);
+		assert.equal(env.calls.rotate, 0);
+		// Deleting the downloaded copy is fine: it's only a cache
+		assert.equal(await a.deleteAttachmentFile(), true);
+	});
+
+	test("new files are named and uploaded, never overwriting", async () => {
+		env = makeEnv();
+		addWebDAV();
+		const { server } = fakeServer(env.glf, { "weber-ua_2004.pdf": "THEIRS" });
+		const p1 = env.addParent({ lib: LIB, authors: ["Müller"], year: "1987" });
+		const p2 = env.addParent({ lib: LIB, authors: ["Weber", "Braun", "Klein"], year: "2004" });
+		const a1 = env.addAttachment("scan.pdf", { lib: LIB, local: "M", parent: p1 });
+		const a2 = env.addAttachment("scan2.pdf", { lib: LIB, local: "W", parent: p2 });
+		const r = await env.glf.publishPending({ libraryID: LIB });
+		same(r.published.sort(), ["mueller_1987.pdf", "weber-ua_2004a.pdf"]);
+		assert.equal(a1.attachmentFilename, "mueller_1987.pdf");
+		assert.equal(a2.attachmentFilename, "weber-ua_2004a.pdf");
+		assert.equal(server.get("weber-ua_2004.pdf").toString(), "THEIRS");
+		assert.equal(server.get("mueller_1987.pdf").toString(), "M");
+	});
+
+	test("a downloaded copy counts as published (same size), nothing re-uploaded", async () => {
+		env = makeEnv();
+		addWebDAV();
+		const { calls } = fakeServer(env.glf, { "a.pdf": "AAAA" });
+		env.addAttachment("a.pdf", { lib: LIB, local: "AAAA" });
+		const r = await env.glf.publishPending({ libraryID: LIB });
+		same(r.published, []);
+		assert.equal(calls.put, 0);
+	});
+
+	test("link matching and attach use the server listing", async () => {
+		env = makeEnv();
+		addWebDAV();
+		fakeServer(env.glf, { "weber_1919.pdf": "W", "other.pdf": "O" });
+		const p = env.addParent({ lib: LIB, authors: ["Weber"], year: "1919" });
+		const r = await env.glf.findMatches({ libraryID: LIB });
+		same(r.matches.map(m => m.file), ["weber_1919.pdf"]);
+		await env.glf.linkMatches(r.matches);
+		const att = env.Zotero.Items.get(p.getAttachments())[0];
+		assert.equal(att.attachmentFilename, "weber_1919.pdf");
+		const p2 = env.addParent({ lib: LIB, authors: ["X"], year: "2000" });
+		const att2 = await env.glf.attachSharedFile(p2, "other.pdf");
+		assert.equal(att2.attachmentPath, "storage:other.pdf");
+		await assert.rejects(env.glf.attachSharedFile(p2, "nope.pdf"), { l10nId: "glf-error-file-missing" });
+	});
+
+	test("status counts files on the server and downloaded copies", async () => {
+		env = makeEnv();
+		addWebDAV();
+		fakeServer(env.glf, { "on-server.pdf": "S", "downloaded.pdf": "D" });
+		env.addAttachment("on-server.pdf", { lib: LIB });
+		env.addAttachment("downloaded.pdf", { lib: LIB, local: "D" });
+		env.addAttachment("gone.pdf", { lib: LIB });
+		const s = await env.glf.getStatus(env.glf.getConfigByID("w1"));
+		assert.equal(s.total, 3);
+		assert.equal(s.found, 2);
+		assert.equal(s.local, 1);
+		same(s.missing, ["gone.pdf"]);
+	});
+
+	test("download all", async () => {
+		env = makeEnv();
+		addWebDAV();
+		fakeServer(env.glf, { "a.pdf": "A", "b.pdf": "B" });
+		const a = env.addAttachment("a.pdf", { lib: LIB });
+		const b = env.addAttachment("b.pdf", { lib: LIB });
+		const r = await env.glf.downloadAll(env.glf.getConfigByID("w1"));
+		assert.equal(r.downloaded, 2);
+		assert.ok(await a.getFilePathAsync());
+		assert.ok(await b.getFilePathAsync());
+	});
+
+	test("server unreachable: nothing published, guardrails stay on", async () => {
+		env = makeEnv();
+		addWebDAV();
+		env.glf.getPassword = async () => "x";
+		env.glf.webdavList = async () => { throw Object.assign(new Error("net"), { l10nId: "glf-webdav-error-network" }); };
+		const p = env.addParent({ lib: LIB, authors: ["A"], year: "2000" });
+		const a = env.addAttachment("scan.pdf", { lib: LIB, local: "X", parent: p });
+		const r = await env.glf.publishPending({ libraryID: LIB });
+		assert.equal(r.baseMissing, true);
+		assert.equal(a.attachmentFilename, "scan.pdf");
+		assert.equal(await env.glf.isPublished(a), true);
+	});
+
+	test("parses PROPFIND replies (WsgiDAV/SeafDAV style, encoded names)", () => {
+		env = makeEnv();
+		const xml = `<?xml version='1.0' encoding='UTF-8'?>
+<D:multistatus xmlns:D="DAV:">
+<D:response><D:href>/dav/Projekt/Literatur/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat></D:response>
+<D:response><D:href>/dav/Projekt/Literatur/m%C3%BCller_1987.pdf</D:href><D:propstat><D:prop><D:resourcetype></D:resourcetype><D:getcontentlength>1234</D:getcontentlength></D:prop></D:propstat></D:response>
+<D:response><D:href>https://box.example/dav/Projekt/Literatur/Unterordner/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat></D:response>
+<d:response xmlns:d="DAV:"><d:href>/dav/Projekt/Literatur/a%20%26%20b.pdf</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>5</d:getcontentlength></d:prop></d:propstat></d:response>
+</D:multistatus>`;
+		const r = env.glf.parseMultistatus(xml, "https://box.example/dav/Projekt/Literatur/");
+		same(r, [
+			{ name: "müller_1987.pdf", isDir: false, size: 1234 },
+			{ name: "Unterordner", isDir: true, size: null },
+			{ name: "a & b.pdf", isDir: false, size: 5 },
+		]);
+	});
+
+	test("basic auth header encodes non-ASCII passwords like the browser", () => {
+		env = makeEnv();
+		assert.equal(env.glf._base64("tester:gehéim!"), Buffer.from("tester:gehéim!").toString("base64"));
+		assert.equal(env.glf._base64("ab"), Buffer.from("ab").toString("base64"));
+	});
+});

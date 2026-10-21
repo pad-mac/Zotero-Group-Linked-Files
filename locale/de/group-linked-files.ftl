@@ -28,6 +28,9 @@ glf-blocked-modify = Zotero verändert keine gemeinsamen PDFs (Seiten drehen ode
 
 ## Anhängen
 
+glf-webdav-password-prompt = WebDAV-Passwort für { $user } (Gruppe „{ $group }“):
+glf-webdav-login-needed = Gruppe „{ $group }“: WebDAV-Anmeldung fehlt oder ist falsch, neue Dateien können nicht hochgeladen werden. Passwort unter Einstellungen → Group Linked Files eingeben.
+glf-webdav-downloading = Lade { $name } …
 glf-attached = Angehängt: { $name }
 glf-confirm-duplicate =
     { $count ->
@@ -62,6 +65,11 @@ glf-error-invalid-name = Zotero kann diesen Dateinamen nicht verwenden. Bitte be
 glf-error-choose-library = Wähle zuerst die Bibliothek oder eine Sammlung einer verknüpften Gruppe aus.
 glf-config-no-group = Für diese Verknüpfung ist noch keine Gruppe gewählt.
 glf-check-no-folder = Auf diesem Computer ist noch kein gemeinsamer Ordner gewählt.
+glf-webdav-error-login = WebDAV-Anmeldung fehlt oder ist falsch. Bitte Benutzername und WebDAV-Passwort prüfen (HU-Box: in den HU-Box-Einstellungen im Abschnitt „WebDAV“ festlegen).
+glf-webdav-error-network = Der WebDAV-Server ist nicht erreichbar.
+glf-webdav-error-notfound = Diesen Ordner gibt es auf dem WebDAV-Server nicht.
+glf-webdav-error-status = Der WebDAV-Server meldet einen Fehler (HTTP { $status }).
+glf-webdav-empty = Der WebDAV-Ordner ist leer.
 glf-error-file-missing = Die Datei ist nicht mehr auffindbar.
 glf-error-generic = Etwas ist schiefgegangen: { $message }
 
@@ -77,6 +85,10 @@ glf-check-published = Soeben in den gemeinsamen Ordner kopiert: { $count }
 glf-check-renamed = Umbenannt, weil der Name schon vergeben war: { $list }
 glf-check-errors = Konnten nicht kopiert werden: { $list }
 glf-check-stranded = Im Zotero-Speicher statt im gemeinsamen Ordner (vermutlich ohne Plugin hinzugefügt): { $count }
+glf-check-no-webdav = Auf diesem Computer ist noch kein WebDAV-Ordner eingerichtet.
+glf-check-webdav = WebDAV-Ordner: { $url }
+glf-check-webdav-error = WebDAV-Ordner { $url }: { $error }
+glf-check-local = Auf diesen Computer geladen: { $count } von { $total }
 glf-check-missing-list = Fehlende Dateien (auf diesem Computer nicht im gemeinsamen Ordner):
 glf-check-more = …und { $count } weitere
 
@@ -115,3 +127,25 @@ glf-prefs-config-nogroup = (keine Gruppe gewählt)
 glf-prefs-config-nofolder = kein Ordner
 glf-prefs-remove-confirm = Verknüpfung für „{ $name }“ entfernen? Dateien und Einträge bleiben, wie sie sind; nur die Einstellungen dieses Computers für die Gruppe werden entfernt, und die Zotero-Dateisynchronisierung gilt wieder für die Gruppe.
 glf-prefs-same-folder = Eine andere verknüpfte Gruppe nutzt denselben Ordner. Das geht, aber die Dateinamen beider Gruppen teilen sich dann einen Ordner.
+glf-prefs-mode = Wo die Dateien liegen
+glf-prefs-mode-folder =
+    .label = Lokaler Ordner (z. B. vom HU-Box-Client synchronisiert)
+glf-prefs-mode-webdav =
+    .label = WebDAV (HU-Box direkt, ohne Client)
+glf-prefs-webdav-server = WebDAV-Adresse
+glf-prefs-webdav-path = Ordner auf dem Server
+glf-prefs-webdav-browse =
+    .label = Durchsuchen…
+glf-prefs-webdav-user = Benutzername
+glf-prefs-webdav-password = WebDAV-Passwort
+glf-prefs-webdav-save =
+    .label = Speichern & testen
+glf-prefs-webdav-help = HU-Box: Einmalig in der HU-Box-Weboberfläche ein WebDAV-Passwort festlegen (Einstellungen, Abschnitt „WebDAV“); dort steht auch der Benutzername. Das Passwort wird im Passwortspeicher von Zotero auf diesem Computer abgelegt. Dateien werden beim Öffnen heruntergeladen.
+glf-prefs-webdav-ok = Verbunden: { $files } Dateien in diesem Ordner.
+glf-prefs-webdav-browse-title = Ordner auf dem Server wählen
+glf-prefs-webdav-browse-use = ✓ Diesen Ordner verwenden: { $path }
+glf-prefs-webdav-browse-up = ↑ Eine Ebene höher
+glf-prefs-download-all =
+    .label = Alle Dateien herunterladen
+glf-prefs-download-progress = Lade { $done } von { $total } …
+glf-prefs-download-done = Heruntergeladen: { $count }

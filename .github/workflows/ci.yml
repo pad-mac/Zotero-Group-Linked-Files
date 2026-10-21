@@ -48,6 +48,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q xvfb libdbus-glib-1-2 libgtk-3-0 libasound2t64 || \
           sudo apt-get install -y -q xvfb libdbus-glib-1-2 libgtk-3-0 libasound2
+          pip install --user wsgidav cheroot || pip install --break-system-packages wsgidav cheroot
       - name: Run plugin inside Zotero
         env:
           ZOTERO_CHANNEL: ${{ matrix.channel }}

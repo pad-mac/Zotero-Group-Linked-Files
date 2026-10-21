@@ -38,6 +38,19 @@ var GroupLinkedFilesPrefs = {
 		this.$("glf-group").addEventListener("command", () => this.onGroupChange());
 		this.$("glf-choose").addEventListener("command", () => this.chooseFolder());
 		this.$("glf-check").addEventListener("command", () => this.refreshStatus(true));
+		this.$("glf-mode").addEventListener("command", () => this.onModeChange());
+		for (let [id, key] of [["glf-webdav-server", "server"], ["glf-webdav-path", "path"],
+			["glf-webdav-user", "user"]]) {
+			this.$(id).addEventListener("change", () => this.onWebDAVField(key, this.$(id).value));
+		}
+		this.$("glf-webdav-save").addEventListener("command", () => this.saveAndTest());
+		this.$("glf-webdav-password").addEventListener("keypress", (event) => {
+			if (event.key == "Enter") {
+				this.saveAndTest();
+			}
+		});
+		this.$("glf-webdav-browse").addEventListener("command", () => this.browseWebDAV());
+		this.$("glf-download-all").addEventListener("command", () => this.downloadAll());
 
 		this.$("glf-naming-enabled").addEventListener("command", () => {
 			this.updateNaming({ enabled: this.$("glf-naming-enabled").checked });
@@ -82,6 +95,22 @@ var GroupLinkedFilesPrefs = {
 			el.style.opacity = "0.85";
 		}
 		this.$("glf-same-folder").style.color = "var(--accent-orange, #c45a00)";
+		Object.assign(document.querySelector(".glf-webdav-grid").style, {
+			display: "grid",
+			gridTemplateColumns: "max-content 1fr max-content",
+			alignItems: "center",
+			columnGap: "10px",
+			rowGap: "6px",
+			margin: "8px 0 4px",
+		});
+		for (let id of ["glf-webdav-server", "glf-webdav-path", "glf-webdav-user",
+			"glf-webdav-password"]) {
+			this.$(id).style.minWidth = "0";
+		}
+		for (let id of ["glf-webdav-result", "glf-download-progress"]) {
+			Object.assign(this.$(id).style, { margin: "4px 0", transition: "opacity 120ms ease-out" });
+		}
+		this.$("glf-download-progress").style.marginInlineStart = "8px";
 		let grid = document.querySelector(".glf-naming-grid");
 		Object.assign(grid.style, {
 			display: "grid",
@@ -127,6 +156,10 @@ var GroupLinkedFilesPrefs = {
 	},
 
 	_folderName(config) {
+		if (config.mode == "webdav") {
+			let segments = String(config.webdav.path || "").split("/").filter(Boolean);
+			return "WebDAV: " + (segments.length ? segments[segments.length - 1] : "/");
+		}
 		let path = this.glf.normalizePath(config.basePath);
 		if (!path) {
 			return this.glf.l10n("glf-prefs-config-nofolder");
@@ -171,6 +204,19 @@ var GroupLinkedFilesPrefs = {
 		this.populateGroups(config);
 		this.$("glf-base").value = config.basePath || "";
 		this.updateSameFolderWarning(config);
+		this.$("glf-mode").value = config.mode;
+		this.$("glf-webdav-server").value = config.webdav.server || "";
+		this.$("glf-webdav-path").value = config.webdav.path || "";
+		this.$("glf-webdav-user").value = config.webdav.user || "";
+		this.$("glf-webdav-password").value = "";
+		this.$("glf-webdav-result").textContent = "";
+		this.$("glf-download-progress").textContent = "";
+		this.updateModeVisibility(config);
+		this.glf.getPassword(config).then((password) => {
+			if (this._currentID == config.id) {
+				this.$("glf-webdav-password").placeholder = password ? "••••••••" : "";
+			}
+		});
 
 		let naming = this.glf.namingFromConfig(config.naming);
 		this.$("glf-naming-enabled").checked = naming.enabled;
@@ -223,6 +269,158 @@ var GroupLinkedFilesPrefs = {
 			popup.append(item);
 		}
 		this.$("glf-group").value = String(config.groupID || 0);
+	},
+
+	updateModeVisibility(config) {
+		let webdav = config.mode == "webdav";
+		this.$("glf-folder-box").hidden = webdav;
+		this.$("glf-webdav-box").hidden = !webdav;
+		this.$("glf-download-all").hidden = !webdav;
+	},
+
+	onModeChange() {
+		let config = this.current;
+		if (!config) {
+			return;
+		}
+		config = this.glf.updateConfig(config.id, { mode: this.$("glf-mode").value });
+		this.updateModeVisibility(config);
+		this.renderConfigList();
+		this.refreshStatus(false);
+	},
+
+	onWebDAVField(key, value) {
+		let config = this.current;
+		if (!config) {
+			return;
+		}
+		value = value.trim();
+		if (key == "path") {
+			value = value.split("/").map(s => s.trim()).filter(Boolean).join("/");
+		}
+		this.glf.updateConfig(config.id, { webdav: { [key]: value } });
+		this.renderConfigList();
+		this.refreshStatus(false);
+	},
+
+	_showResult(text, ok) {
+		let el = this.$("glf-webdav-result");
+		el.textContent = text;
+		el.style.color = ok ? "" : "var(--accent-red, #c00)";
+	},
+
+	_errorText(e) {
+		return e && e.l10nId ? this.glf.l10n(e.l10nId, e.l10nArgs) : String(e && e.message || e);
+	},
+
+	/** Save the typed password (if any) and try to list the folder */
+	async saveAndTest() {
+		let config = this.current;
+		if (!config) {
+			return;
+		}
+		// Pick up fields the user typed into without leaving them
+		for (let [id, key] of [["glf-webdav-server", "server"], ["glf-webdav-path", "path"],
+			["glf-webdav-user", "user"]]) {
+			if (this.$(id).value.trim() != (config.webdav[key] || "")) {
+				this.onWebDAVField(key, this.$(id).value);
+			}
+		}
+		config = this.current;
+		let field = this.$("glf-webdav-password");
+		let typed = field.value;
+		let button = this.$("glf-webdav-save");
+		button.disabled = true;
+		this._showResult("…", true);
+		try {
+			let result = await this.glf.testWebDAV(config, typed || null);
+			if (typed) {
+				await this.glf.setPassword(config, typed);
+				field.value = "";
+				field.placeholder = "••••••••";
+			}
+			this._showResult(this.glf.l10n("glf-prefs-webdav-ok", { files: result.files }), true);
+			this.refreshStatus(false);
+		}
+		catch (e) {
+			this._showResult(this._errorText(e), false);
+		}
+		finally {
+			button.disabled = false;
+		}
+	},
+
+	/** Walk the server's folders with simple list dialogs */
+	async browseWebDAV() {
+		let config = this.current;
+		if (!config) {
+			return;
+		}
+		let typed = this.$("glf-webdav-password").value || null;
+		let path = String(config.webdav.path || "").split("/").filter(Boolean);
+		while (true) {
+			let subfolders;
+			try {
+				subfolders = await this.glf.webdavSubfolders(config, path.join("/"), typed);
+			}
+			catch (e) {
+				if (path.length) {
+					// Configured folder gone or not readable: start at the top
+					path = [];
+					continue;
+				}
+				this._showResult(this._errorText(e), false);
+				return;
+			}
+			let shown = "/" + path.join("/");
+			let options = [this.glf.l10n("glf-prefs-webdav-browse-use", { path: shown })];
+			if (path.length) {
+				options.push(this.glf.l10n("glf-prefs-webdav-browse-up"));
+			}
+			let offset = options.length;
+			options.push(...subfolders.map(name => "📁 " + name));
+			let selected = { value: 0 };
+			let ok = Services.prompt.select(window, this.glf.l10n("glf-name"),
+				this.glf.l10n("glf-prefs-webdav-browse-title"), options, selected);
+			if (!ok) {
+				return;
+			}
+			if (selected.value == 0) {
+				this.$("glf-webdav-path").value = path.join("/");
+				this.onWebDAVField("path", path.join("/"));
+				this.saveAndTest();
+				return;
+			}
+			if (path.length && selected.value == 1) {
+				path.pop();
+				continue;
+			}
+			path.push(subfolders[selected.value - offset]);
+		}
+	},
+
+	async downloadAll() {
+		let config = this.current;
+		if (!config) {
+			return;
+		}
+		let button = this.$("glf-download-all");
+		let label = this.$("glf-download-progress");
+		button.disabled = true;
+		try {
+			let { downloaded, failed } = await this.glf.downloadAll(config, (done, total) => {
+				label.textContent = this.glf.l10n("glf-prefs-download-progress", { done, total });
+			});
+			label.textContent = this.glf.l10n("glf-prefs-download-done", { count: downloaded })
+				+ (failed.length ? " · " + this.glf.l10n("glf-check-errors", { list: failed.join(", ") }) : "");
+		}
+		catch (e) {
+			label.textContent = this._errorText(e);
+		}
+		finally {
+			button.disabled = false;
+			this.refreshStatus(false);
+		}
 	},
 
 	updateSameFolderWarning(config) {

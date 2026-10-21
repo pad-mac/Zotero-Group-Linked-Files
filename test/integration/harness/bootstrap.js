@@ -443,6 +443,127 @@ async function run(dir, results, report) {
 		return lines;
 	});
 
+	// ---------------------------------------------------------------- WebDAV
+	let davPort = Services.prefs.getIntPref("glf-harness.davport", 18765);
+	let davDir = PathUtils.join(dir, "dav", "Bibliothek", "Literatur");
+	let cfg3;
+	let lib3;
+	let davParent;
+	let makeItem = async (libID, authors, year, title) => {
+		let item = new Zotero.Item("book");
+		item.libraryID = libID;
+		item.setField("title", title || `${authors.join(" / ")} ${year}`);
+		if (year) {
+			item.setField("date", year);
+		}
+		item.setCreators(authors.map(lastName => ({ firstName: "A.", lastName, creatorType: "author" })));
+		await item.saveTx();
+		return item;
+	};
+
+	await check("WebDAV link: wrong password is refused, right one is stored", async () => {
+		let group3 = new Zotero.Group();
+		group3.id = 816;
+		group3.name = "WebDAV-Projekt";
+		group3.description = "";
+		group3.editable = true;
+		group3.filesEditable = true;
+		group3.version = 1;
+		group3.archived = false;
+		await group3.saveTx();
+		lib3 = group3.libraryID;
+		cfg3 = glf.addConfig({
+			groupID: 816,
+			mode: "webdav",
+			webdav: { server: `http://127.0.0.1:${davPort}/`, path: "Bibliothek/Literatur", user: "tester" },
+		});
+		let refused = null;
+		try {
+			await glf.testWebDAV(cfg3, "falsch");
+		}
+		catch (e) {
+			refused = e.l10nId;
+		}
+		assert(refused == "glf-webdav-error-login", "wrong password gave " + refused);
+		await glf.setPassword(cfg3, "geheim");
+		glf._passwords.clear(); // read it back from Zotero's password storage
+		assert(await glf.getPassword(cfg3) == "geheim", "password not stored");
+		let result = await glf.testWebDAV(cfg3);
+		assert(result.files == 3 && result.folders == 1, "listing " + JSON.stringify(result));
+		let sub = await glf.webdavSubfolders(cfg3, "Bibliothek");
+		assert(JSON.stringify(sub) == JSON.stringify(["Literatur"]), "subfolders " + JSON.stringify(sub));
+		assert(Zotero.Sync.Storage.Local.getEnabledForLibrary(lib3) === false, "file sync on");
+		return result;
+	});
+
+	await check("WebDAV link: file is downloaded on open and shows in Zotero's reader", async () => {
+		davParent = await makeItem(lib3, ["Müller"], "1987", "Magnetschwebebahn (WebDAV)");
+		let att = await glf.attachSharedFile(davParent, "Mueller - 1987 - Magnetschwebebahn.pdf");
+		let local = glf.getLocalPath(att);
+		assert(!(await IOUtils.exists(local)), "downloaded too early");
+		assert(await glf.isPublished(att), "not seen on server");
+		let reader = await Zotero.Reader.open(att.id);
+		await reader._initPromise;
+		await waitFor(() => reader._internalReader, 20000, "internal reader");
+		await reader._internalReader._primaryView.initializedPromise;
+		assert(await IOUtils.exists(local), "not downloaded");
+		let source = PathUtils.join(davDir, "Mueller - 1987 - Magnetschwebebahn.pdf");
+		assert(await md5(local) == await md5(source), "download differs");
+		// Guardrail: no renaming of a file that's on the server
+		assert(await att.renameAttachmentFile("x.pdf") === -2, "rename not blocked");
+		return local;
+	});
+
+	await check("WebDAV link: double-click path (viewAttachment) downloads too", async () => {
+		let p = await makeItem(lib3, ["Weber"], "1919", "Wissenschaft als Beruf");
+		let att = await glf.attachSharedFile(p, "weber_1919.pdf");
+		let pane = Zotero.getMainWindow().ZoteroPane;
+		await pane.viewAttachment([att.id]);
+		await waitFor(() => IOUtils.exists(glf.getLocalPath(att)), 15000, "download via viewAttachment");
+	});
+
+	await check("WebDAV link: new files are named, uploaded, never overwrite", async () => {
+		let braun = await makeItem(lib3, ["Braun"], "2001");
+		let klein = await makeItem(lib3, ["Klein"], "2002");
+		let before = await md5(PathUtils.join(davDir, "klein_2002.pdf"));
+		let a1 = await Zotero.Attachments.importFromFile({
+			file: PathUtils.join(fixtures, "scan_0042.pdf"), parentItemID: braun.id,
+		});
+		let a2 = await Zotero.Attachments.importFromFile({
+			file: PathUtils.join(fixtures, "scan_0042.pdf"), parentItemID: klein.id,
+		});
+		let r = await glf.publishPending({ force: true, libraryID: lib3 });
+		assert(a1.attachmentFilename == "braun_2001.pdf", "name " + a1.attachmentFilename);
+		assert(a2.attachmentFilename == "klein_2002a.pdf", "name " + a2.attachmentFilename);
+		assert(await IOUtils.exists(PathUtils.join(davDir, "braun_2001.pdf")), "not uploaded");
+		assert(await IOUtils.exists(PathUtils.join(davDir, "klein_2002a.pdf")), "not uploaded (a)");
+		assert(await md5(PathUtils.join(davDir, "klein_2002.pdf")) == before, "server file overwritten");
+		assert(await md5(PathUtils.join(davDir, "braun_2001.pdf")) == await md5(glf.getLocalPath(a1)),
+			"uploaded file differs");
+		// Second pass: nothing to do
+		let again = await glf.publishPending({ force: true, libraryID: lib3 });
+		assert(!again.published.length, "uploaded twice: " + JSON.stringify(again.published));
+		return JSON.parse(JSON.stringify(r));
+	});
+
+	await check("WebDAV link: link matching and download all", async () => {
+		// Weber 1919 already has its file; Klein 2002 got "klein_2002a"; a new Klein 2002
+		// item has no file -> but "klein_2002.pdf" on the server matches
+		let k2 = await makeItem(lib3, ["Klein"], "2002", "Zweites Klein-Buch");
+		let r = await glf.findMatches({ libraryID: lib3 });
+		let got = Object.fromEntries(r.matches.map(m => [m.item.id, m.file]));
+		assert(got[k2.id] == "klein_2002.pdf", "matches " + JSON.stringify(got));
+		await glf.linkMatches(r.matches);
+		let att = Zotero.Items.get(k2.getAttachments())[0];
+		assert(!(await IOUtils.exists(glf.getLocalPath(att))), "downloaded before needed");
+		let d = await glf.downloadAll(cfg3);
+		assert(d.downloaded >= 1 && !d.failed.length, "download all " + JSON.stringify(d));
+		assert(await IOUtils.exists(glf.getLocalPath(att)), "not downloaded by download all");
+		let { lines } = await glf.describeStatus({ configID: cfg3.id });
+		assert(lines.some(l => l.includes("WebDAV")), "status: " + lines.join(" | "));
+		return lines;
+	});
+
 	await check("menus are in the main window", async () => {
 		let doc = Zotero.getMainWindow().document;
 		assert(doc.getElementById("glf-itemmenu-attach"), "item menu entry missing");
@@ -472,7 +593,7 @@ async function run(dir, results, report) {
 		}, 15000, "status text");
 		let configs = doc.getElementById("glf-config");
 		let entries = [...doc.getElementById("glf-config-popup").children].map(e => e.getAttribute("label"));
-		assert(entries.length == 2, "link list: " + JSON.stringify(entries));
+		assert(entries.length == 3, "link list: " + JSON.stringify(entries));
 		assert(configs.value == cfg.id, "first link not selected");
 		let menulist = doc.getElementById("glf-group");
 		assert(menulist.value == "4711", "group menulist value " + menulist.value);
@@ -490,6 +611,37 @@ async function run(dir, results, report) {
 		// The first group isn't offered again for the second link
 		let offered = [...doc.getElementById("glf-group-popup").children].map(e => e.getAttribute("value"));
 		assert(!offered.includes("4711"), "group 1 offered twice");
+
+		// The WebDAV link: folder box hidden, WebDAV fields filled in
+		configs.value = cfg3.id;
+		configs.dispatchEvent(new win.Event("command"));
+		await waitFor(() => doc.getElementById("glf-webdav-path").value == "Bibliothek/Literatur",
+			5000, "WebDAV link shown");
+		assert(doc.getElementById("glf-folder-box").hidden, "folder box visible for WebDAV");
+		assert(!doc.getElementById("glf-webdav-box").hidden, "WebDAV box hidden");
+		assert(doc.getElementById("glf-webdav-user").value == "tester", "user");
+		doc.getElementById("glf-webdav-save").doCommand();
+		try {
+			await waitFor(() => /(Verbunden|Connected): 5/.test(doc.getElementById("glf-webdav-result").textContent),
+				10000, "connection test result");
+		}
+		catch (e) {
+			throw new Error("connection test shows: '" + doc.getElementById("glf-webdav-result").textContent
+				+ "', status: '" + doc.getElementById("glf-status").textContent + "'");
+		}
+		await waitFor(() => doc.getElementById("glf-status").textContent.includes("WebDAV"),
+			10000, "WebDAV status");
+		win.resizeTo(900, 1200);
+		await Zotero.Promise.delay(800);
+		let shot2 = Services.prefs.getStringPref("glf-harness.screenshot2", "");
+		if (shot2) {
+			let canvas = doc.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
+			canvas.width = win.innerWidth;
+			canvas.height = win.innerHeight;
+			canvas.getContext("2d").drawWindow(win, 0, 0, canvas.width, canvas.height, "white");
+			let data = canvas.toDataURL("image/png").split(",")[1];
+			await IOUtils.write(shot2, Uint8Array.from(atob(data), c => c.charCodeAt(0)));
+		}
 
 		configs.value = cfg.id;
 		configs.dispatchEvent(new win.Event("command"));
